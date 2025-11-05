@@ -2,6 +2,41 @@ import streamlit as st
 import pandas as pd
 import math
 from io import BytesIO
+import requests
+import re
+
+
+def get_google_sheets_title(url):
+    """
+    구글 시트 URL에서 제목을 추출한다.
+
+    Args:
+        url (str): 구글 시트 URL
+
+    Returns:
+        str: 시트 제목 또는 None
+    """
+    try:
+        # URL이 공유 링크인지 확인하고 적절히 변환
+        if "/edit" in url:
+            view_url = url.replace("/edit", "/view")
+        else:
+            view_url = url
+
+        response = requests.get(view_url, timeout=10)
+        response.raise_for_status()
+
+        # HTML에서 제목 추출
+        title_match = re.search(r"<title>(.*?)</title>", response.text)
+        if title_match:
+            title = title_match.group(1)
+            # "Google Sheets" 제거
+            title = title.replace(" - Google Sheets", "").replace(" - Google スプレッドシート", "")
+            return title.strip()
+
+        return None
+    except Exception:
+        return None
 
 
 def extract_first_payment_month(df):
@@ -123,6 +158,7 @@ def generate_missed_months(df):
         present_codes = set(group["코드1"].tolist())
         for code in target_codes:
             if code not in present_codes:
+                기준_라벨 = {1: "운영기금", 2: "협력기금", 3: "복지기금"}.get(code, None)
                 missed_rows.append(
                     {
                         "이름": name,
@@ -131,7 +167,7 @@ def generate_missed_months(df):
                         "코드1": code,
                         "입금": 0,
                         "기준금액": None,
-                        "기준": None,
+                        "기준": 기준_라벨,
                         "구분": "미납",
                     }
                 )
@@ -184,81 +220,164 @@ def to_excel_bytes(df_first, df_errors, output_filename):
     return buffer.getvalue(), output_filename
 
 
+@st.cache_data(show_spinner=False)
+def build_excel_bytes(df_first, df_errors, output_filename):
+    # Cache the generated Excel bytes to avoid recomputation on reruns
+    return to_excel_bytes(df_first, df_errors, output_filename)
+
+
 st.set_page_config(page_title="인별납부내역 오류검출", layout="wide")
 st.title("인별납부내역 오류검출 웹앱")
 st.caption("엑셀 파일을 업로드하면 최초납입월과 오류검출 결과를 생성합니다.")
 
+if "processing" not in st.session_state:
+    st.session_state["processing"] = False
+if "previous_gsheet_url" not in st.session_state:
+    st.session_state["previous_gsheet_url"] = ""
+if "cached_sheet_title" not in st.session_state:
+    st.session_state["cached_sheet_title"] = None
+
 with st.sidebar:
     st.header("입력 파일")
     main_file = st.file_uploader("※정리본 엑셀 (raw 시트 포함)", type=["xlsx"], key="main")
-    grad_file = st.file_uploader("오늘공동체졸업생명단.xlsx", type=["xlsx"], key="grad")
+
+    # 기본 구글 시트 URL
+    default_url = (
+        "https://docs.google.com/spreadsheets/d/"
+        "1GRPi_kP7V9YBAmS-jZKpUI9pwPCpeuaXBEGlGLHfL3g/edit?gid=0#gid=0"
+    )
+    gsheet_url = st.text_input("졸업생 명단 Google Sheets URL", value=default_url)
+
+    # 구글 시트 제목 표시 (URL이 변경될 때만 업데이트)
+    if gsheet_url and gsheet_url != "":
+        # URL이 변경되었거나 캐시된 제목이 없는 경우에만 새로 가져오기
+        if (
+            gsheet_url != st.session_state["previous_gsheet_url"]
+            or st.session_state["cached_sheet_title"] is None
+        ):
+            with st.spinner("구글 시트 제목을 불러오는 중..."):
+                sheet_title = get_google_sheets_title(gsheet_url)
+                st.session_state["cached_sheet_title"] = sheet_title
+                st.session_state["previous_gsheet_url"] = gsheet_url
+
+        # 캐시된 제목 표시
+        if st.session_state["cached_sheet_title"]:
+            st.success(f"📊 **{st.session_state['cached_sheet_title']}**")
+        else:
+            st.warning("시트 제목을 불러올 수 없습니다.")
+
     st.divider()
-    sheet_name = st.text_input("원본 시트명", value="raw")
-    header_row = st.number_input("헤더 시작 행 (0-index)", min_value=0, value=1, step=1)
-    run_btn = st.button("처리 실행")
+    with st.expander("고급 설정", expanded=False):
+        sheet_name = st.text_input("원본 시트명", value="raw")
+        header_row = st.number_input("헤더 시작 행 (0-index)", min_value=0, value=1, step=1)
+
+    run_btn = st.button("처리 실행", disabled=st.session_state["processing"])
 
 if run_btn:
-    if not main_file or not grad_file:
-        st.error("두 개의 엑셀 파일을 모두 업로드하세요.")
-    else:
-        try:
-            df = pd.read_excel(main_file, sheet_name=sheet_name, header=header_row)
-        except Exception as e:
-            st.error(f"원본 엑셀 읽기 오류: {e}")
-            st.stop()
+    st.session_state["processing"] = True
+    try:
+        with st.spinner("처리 실행 중..."):
+            if not main_file or not gsheet_url:
+                st.error("원본 엑셀과 Google Sheets URL을 입력하세요.")
+            else:
+                try:
+                    df = pd.read_excel(main_file, sheet_name=sheet_name, header=header_row)
+                except Exception as e:
+                    st.error(f"원본 엑셀 읽기 오류: {e}")
+                    st.stop()
 
-        required_cols = ["이름", "해당년", "해당월", "코드1", "코드2", "입금"]
-        missing = [c for c in required_cols if c not in df.columns]
-        if missing:
-            st.error(f"누락된 열: {missing}")
-            st.stop()
+                required_cols = ["이름", "해당년", "해당월", "코드1", "코드2", "입금"]
+                missing = [c for c in required_cols if c not in df.columns]
+                if missing:
+                    st.error(f"누락된 열: {missing}")
+                    st.stop()
 
-        try:
-            df_grad = pd.read_excel(grad_file, sheet_name="졸업생명단", header=None)
-            graduation_names = set(df_grad.iloc[:, 0].dropna().astype(str).tolist())
-            df = df[df["이름"].astype(str).isin(graduation_names)].copy()
-        except Exception as e:
-            st.error(f"졸업생명단 처리 오류: {e}")
-            st.stop()
+                try:
+                    # Google Sheets CSV export: assumes the provided link is a normal view URL
+                    # Convert to export?format=csv to read via pandas
+                    def to_csv_url(url: str) -> str:
+                        if "export?format=csv" in url:
+                            return url
+                        if "/edit" in url:
+                            base = url.split("/edit")[0]
+                            return base + "/export?format=csv"
+                        if "gid=" in url and "docs.google.com" in url:
+                            # Some share links already point to export; let pandas try directly
+                            return url
+                        return url
 
-        numeric_columns = ["해당년", "해당월", "코드1", "코드2", "입금"]
-        for col in numeric_columns:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-                df[col] = df[col].round().astype("Int64")
+                    csv_url = to_csv_url(gsheet_url)
+                    df_sheet = pd.read_csv(csv_url)
 
-        with st.spinner("오류검출 실행 중..."):
-            df_errors = detect_errors(df)
+                    # Expecting a sheet "명단(전체)" with columns including "이름" and "구분"
+                    # If multiple sheets are present, Google export is per sheet;
+                    # user should share that sheet's URL.
+                    # Filter rows where 구분 == 졸업생 and collect names
+                    if "구분" not in df_sheet.columns or "이름" not in df_sheet.columns:
+                        raise ValueError(
+                            "Google Sheet에 '명단(전체)' 시트의 '이름'과 '구분' 열이 필요합니다."
+                        )
+                    grad_df = df_sheet[df_sheet["구분"].astype(str).str.strip() == "졸업생"]
+                    graduation_names = set(
+                        grad_df["이름"].dropna().astype(str).str.strip().tolist()
+                    )
+                    df = df[df["이름"].astype(str).str.strip().isin(graduation_names)].copy()
+                except Exception as e:
+                    st.error(f"졸업생명단 처리 오류: {e}")
+                    st.stop()
 
-        with st.spinner("최초납입월/미납월 생성 중..."):
-            df_first_payment = extract_first_payment_month(df[df["코드2"] == 1])
-            df_missed = generate_missed_months(
-                df[(df["코드2"] == 1) & (df["코드1"].isin([1, 2, 3]))]
-            )
-            if not df_missed.empty:
-                df_errors = pd.concat([df_errors, df_missed], ignore_index=True)
-            if not df_errors.empty:
-                df_errors = df_errors.sort_values(
-                    ["이름", "해당년", "해당월", "코드1"]
-                ).reset_index(drop=True)
-                df_errors.index = df_errors.index + 1
+                numeric_columns = ["해당년", "해당월", "코드1", "코드2", "입금"]
+                for col in numeric_columns:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col], errors="coerce")
+                        df[col] = df[col].round().astype("Int64")
 
-        st.success("처리가 완료되었습니다.")
+                with st.spinner("오류검출 실행 중..."):
+                    df_errors = detect_errors(df)
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("최초납입월")
-            st.dataframe(df_first_payment, use_container_width=True)
-        with col2:
-            st.subheader("오류검출결과")
-            st.dataframe(df_errors, use_container_width=True)
+                with st.spinner("최초납입월/미납월 생성 중..."):
+                    df_first_payment = extract_first_payment_month(df[df["코드2"] == 1])
+                    df_missed = generate_missed_months(
+                        df[(df["코드2"] == 1) & (df["코드1"].isin([1, 2, 3]))]
+                    )
+                    if not df_missed.empty:
+                        df_errors = pd.concat([df_errors, df_missed], ignore_index=True)
+                    if not df_errors.empty:
+                        df_errors = df_errors.sort_values(
+                            ["이름", "해당년", "해당월", "코드1"]
+                        ).reset_index(drop=True)
+                        df_errors.index = df_errors.index + 1
 
-        base_name = getattr(main_file, "name", "result.xlsx")
-        output_name = base_name.replace(".xlsx", "_오류검출.xlsx")
-        data, out_name = to_excel_bytes(df_first_payment, df_errors, output_name)
+                # Persist results for rendering after reruns (e.g., download clicks)
+                st.session_state["df_errors"] = df_errors
+                st.session_state["df_first_payment"] = df_first_payment
+                base_name = getattr(main_file, "name", "result.xlsx")
+                st.session_state["download_name"] = base_name.replace(".xlsx", "_오류검출.xlsx")
+                st.success("처리가 완료되었습니다.")
+    finally:
+        st.session_state["processing"] = False
+
+# Render persisted results if available
+if "df_errors" in st.session_state and isinstance(st.session_state["df_errors"], pd.DataFrame):
+    header_col, action_col = st.columns([1, 0.25])
+    with header_col:
+        st.subheader("오류검출결과")
+    with action_col:
+        dl_name = st.session_state.get("download_name", "result_오류검출.xlsx")
+        data, out_name = build_excel_bytes(
+            st.session_state.get("df_first_payment", pd.DataFrame()),
+            st.session_state["df_errors"],
+            dl_name,
+        )
         st.download_button(
             label="결과 엑셀 다운로드",
             data=data,
             file_name=out_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
         )
+
+    st.dataframe(st.session_state["df_errors"], width="stretch")
+
+    with st.expander("최초납입월", expanded=False):
+        st.dataframe(st.session_state.get("df_first_payment", pd.DataFrame()), width="stretch")
