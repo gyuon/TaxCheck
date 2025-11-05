@@ -1,0 +1,10 @@
+# .history folder
+.history/
+ 
+# Excel files
+*.xlsx
+
+# Python files (ignore all except app.py)
+*.py
+!app.py
+
