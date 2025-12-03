@@ -183,13 +183,25 @@ def to_excel_bytes(df_first, df_errors, output_filename):
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         if not df_first.empty:
             df_first.to_excel(writer, index=True, index_label="번호", sheet_name="최초납입월")
-            worksheet_first = writer.sheets["최초납입월"]
-            worksheet_first.auto_filter.ref = worksheet_first.dimensions
         if not df_errors.empty:
             df_errors.to_excel(writer, index=True, index_label="번호", sheet_name="오류검출결과")
             worksheet_errors = writer.sheets["오류검출결과"]
             worksheet_errors.column_dimensions["G"].width = 10
             worksheet_errors.column_dimensions["H"].width = 30
+            from openpyxl.utils import get_column_letter
+
+            max_data_col = 1
+            for col in range(1, worksheet_errors.max_column + 1):
+                has_data = False
+                for row in range(2, worksheet_errors.max_row + 1):
+                    value = worksheet_errors.cell(row=row, column=col).value
+                    if value not in (None, ""):
+                        has_data = True
+                        break
+                if has_data:
+                    max_data_col = col
+            last_col = get_column_letter(max_data_col)
+            worksheet_errors.auto_filter.ref = f"A1:{last_col}{worksheet_errors.max_row}"
             from openpyxl.styles import Alignment
 
             for row in worksheet_errors.iter_rows(min_row=1, max_row=len(df_errors) + 1):
