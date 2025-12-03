@@ -190,18 +190,11 @@ def to_excel_bytes(df_first, df_errors, output_filename):
             worksheet_errors.column_dimensions["H"].width = 30
             from openpyxl.utils import get_column_letter
 
-            max_data_col = 1
-            for col in range(1, worksheet_errors.max_column + 1):
-                has_data = False
-                for row in range(2, worksheet_errors.max_row + 1):
-                    value = worksheet_errors.cell(row=row, column=col).value
-                    if value not in (None, ""):
-                        has_data = True
-                        break
-                if has_data:
-                    max_data_col = col
-            last_col = get_column_letter(max_data_col)
-            worksheet_errors.auto_filter.ref = f"A1:{last_col}{worksheet_errors.max_row}"
+            # df_errors의 컬럼 헤더 개수를 기준으로 필터 적용 컬럼 범위 결정
+            # A열은 index("번호"), 이후 df_errors.columns 순서대로 배치되므로 +1
+            last_col_index = len(df_errors.columns) + 1
+            last_col_letter = get_column_letter(last_col_index)
+            worksheet_errors.auto_filter.ref = f"A1:{last_col_letter}{len(df_errors) + 1}"
             from openpyxl.styles import Alignment
 
             for row in worksheet_errors.iter_rows(min_row=1, max_row=len(df_errors) + 1):
