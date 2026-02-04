@@ -1,10 +1,30 @@
 # .history folder
 .history/
- 
+
+backup/
+
 # Excel files
 *.xlsx
 
 # Python files (ignore all except app.py)
 *.py
 !app.py
+!data_processor.py
+!compare_excel.py
+!test_*.py
+!verify_*.py
+!constants.py
+
+# Metadata and Configuration
+!requirements.txt
+!*.md
+!.streamlit/
+
+# Temporary and Cache files
+__pycache__/
+*.tmp
+~$*
+*.txt
+!requirements.txt
+
 
