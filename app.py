@@ -13,18 +13,36 @@ from data_processor import (
 )
 from constants import Col, Status
 
-# [Fix] FutureWarning: Downcasting object dtype arrays on .fillna is deprecated.
+# [수정] .fillna 시 object 타입 배열의 다운캐스팅 FutureWarning 해결
 pd.set_option('future.no_silent_downcasting', True)
 
 @st.cache_data(show_spinner=False)
 def build_excel_bytes(df_first, df_errors, output_filename):
-    # Cache the generated Excel bytes to avoid recomputation on reruns
+    # 재실행 시 재계산을 방지하기 위해 생성된 엑셀 바이트를 캐싱함
     return to_excel_bytes(df_first, df_errors, output_filename)
 
 
 st.set_page_config(page_title="인별납부내역 오류검출", layout="wide")
-st.title("인별납부내역 오류검출 웹앱")
-st.caption("엑셀 파일을 업로드하면 최초납부월과 오류검출 결과를 생성합니다.")
+# --- 노르딕 브루탈리스트 헤더 및 타이틀 ---
+st.markdown(f"""
+    <div style="display: flex; align-items: center; padding: 0px 40px; height: 80px; border-bottom: 1.5px solid #1F2937; margin-bottom: 24px;">
+        <span style="font-size: 22px; font-weight: 900; letter-spacing: 1.5px; color: #1F2937;">TAXCHECK</span>
+        <div style="margin-left: 64px; display: flex; gap: 40px;">
+            <span style="font-size: 14px; font-weight: bold; color: #1F2937;">홈</span>
+            <span style="font-size: 14px; font-weight: medium; color: #9CA3AF;">상세 분석</span>
+            <span style="font-size: 14px; font-weight: medium; color: #9CA3AF;">기록 보관</span>
+        </div>
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 20px;">
+            <span style="font-size: 12px; font-weight: 900; color: #1F2937;">시스템 가동 중</span>
+            <div style="width: 40px; height: 20px; border: 1.5px solid #1F2937; position: relative;">
+                <div style="width: 12px; height: 12px; background-color: #1F2937; position: absolute; left: 4px; top: 3px;"></div>
+            </div>
+        </div>
+    </div>
+    <div style="padding: 0px 40px; margin-bottom: 24px;">
+        <h1 style="font-size: 42px; font-weight: 700; letter-spacing: -1.5px; color: #1F2937; margin: 0;">데이터 분석 대시보드</h1>
+    </div>
+""", unsafe_allow_html=True)
 
 if "processing" not in st.session_state:
     st.session_state["processing"] = False
@@ -32,115 +50,158 @@ if "previous_gsheet_url" not in st.session_state:
     st.session_state["previous_gsheet_url"] = ""
 if "cached_sheet_title" not in st.session_state:
     st.session_state["cached_sheet_title"] = None
+# ... (render_styled_table, reset_app 함수는 아래에 정의됨) ...
 
-# --- Custom CSS for UI Enhancements ---
+# --- UI 개선을 위한 노르딕 브루탈리스트 CSS ---
 st.markdown("""
 <style>
-    /* Global Font Tweak */
-    html, body, [class*="css"] {
-        font-family: 'Pretendard', 'Malgun Gothic', sans-serif;
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+
+    /* 전역 배경 및 폰트 설정 */
+    .main {
+        background-color: #FFFFFF !important;
+        font-family: 'Inter', sans-serif;
     }
     
-    /* Button Styling */
-    div.stButton > button {
-        font-weight: bold;
-        border-radius: 8px;
-        transition: all 0.2s;
-    }
-    div.stButton > button:hover {
-        transform: scale(1.02);
-    }
-    
-    /* Expander Styling */
-    .streamlit-expanderHeader {
-        font-weight: bold;
-        background-color: #f8f9fa;
-        border-radius: 8px;
+    /* 텍스트 색상 고정 */
+    h1, h2, h3, h4, p, span, label {
+        color: #1F2937 !important;
     }
 
-    /* Custom Table Styling (HTML) */
-    table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 14px;
-        border: 1px solid #eee;
+    /* [중요] 모든 입력창 모서리 완전 직각화 (강력한 셀렉터) */
+    div[data-testid="stNumberInput"] *, 
+    div[data-testid="stTextInput"] *,
+    div[data-baseweb="input"] *,
+    div[data-baseweb="base-input"] * {
+        border-radius: 0px !important;
     }
-    th {
-        background-color: #f8f9fa;
-        color: #333;
-        font-weight: 700 !important; /* Bold Headers */
-        padding: 12px 8px;
-        text-align: left; /* Left Alignment */
-        border-bottom: 2px solid #ddd;
+
+    /* 입력창 배경색 및 라인 정돈 */
+    div[data-baseweb="input"] {
+        border: none !important;
+        background-color: #FFFFFF !important;
     }
-    td {
-        padding: 10px 8px;
-        border-bottom: 1px solid #f1f3f5;
-        vertical-align: middle;
+
+    /* 노르딕 브루탈리스트 카드 스타일 (졸업생 명단 연결 등) */
+    div[data-testid="stColumn"]:has(div.nordic-marker) {
+        background-color: #DBEAFE !important;
+        padding: 16px 20px !important;
+        margin-bottom: 8px !important;
+        border-radius: 0px !important;
+        display: flex;
+        flex-direction: column;
+        transition: all 0.2s;
     }
-    tr:hover {
-        background-color: #f8f9fa;
+    div[data-testid="stColumn"]:has(div.nordic-marker):hover {
+        box-shadow: 10px 10px 0px #1F2937;
+        transform: translate(-3px, -3px);
     }
     
-    /* Chip Styling */
-    .chip {
-        display: inline-block;
-        padding: 4px 10px;
-        border-radius: 12px;
-        font-weight: 600;
-        font-size: 12px;
-        line-height: 1;
+    /* 카드 내 제목 스타일 */
+    div[data-testid="stColumn"] h5 {
+        color: #1F2937 !important;
+        font-weight: 900 !important;
+        font-size: 1.3rem !important;
+        margin-top: 0 !important;
+        margin-bottom: 12px !important;
+        border-bottom: 2.5px solid #1F2937 !important;
+        padding-bottom: 6px !important;
     }
-    .chip-excess { background-color: #ffe3e3; color: #c92a2a; } /* 초과 */
-    .chip-insufficient { background-color: #fff3bf; color: #e67700; } /* 부족 */
-    .chip-unpaid { background-color: #f1f3f5; color: #495057; } /* 미납 */
-    
-    .table-container {
-        width: 100%;
-        margin-bottom: 2rem;
+
+    /* 분석 실행 버튼 스타일: 고대비 노르딕 브루탈리즘 */
+    div.stButton > button {
+        background-color: #1F2937 !important;
+        color: #FFFFFF !important;
+        border: 3px solid #000000 !important;
+        border-radius: 0px !important;
+        font-weight: 900 !important;
+        padding: 12px 0px !important;
+        letter-spacing: 1px;
+        transition: all 0.1s;
+        width: 100% !important;
+    }
+    div.stButton > button p, div.stButton > button span {
+        color: #FFFFFF !important;
+        font-weight: 900 !important;
+    }
+    div.stButton > button:hover {
+        background-color: #374151 !important;
+        box-shadow: 6px 6px 0px #9CA3AF;
+        transform: translate(-1px, -1px);
+    }
+
+    /* 구분선 스타일 */
+    hr {
+        margin: 4rem 0 !important;
+        border-color: #1F2937 !important;
+        opacity: 1 !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
 def render_styled_table(df):
     """
-    Render dataframe using st.dataframe for native scrolling and performance.
-    Uses pandas styler for formatting.
+    노르딕 브루탈리스트 스타일의 커스텀 HTML 테이블을 렌더링함.
+    장식을 배제하고 데이터 본연의 구조(그리드)를 드러냄.
     """
     if df.empty:
         st.write("데이터가 없습니다.")
         return
 
-    # Create a styler object
-    styler = df.style
+    # 성능을 위해 상위 200건만 렌더링 (브루탈리스트 미학 강조)
+    display_df = df.head(200)
     
-    # Format numbers with commas
-    format_dict = {}
-    for col in df.columns:
-        if col in [Col.RAW_DEPOSIT, Col.DEPOSIT, Col.STANDARD, Col.DIFF]:
-            format_dict[col] = "{:,.0f}"
+    # 컬럼 한글화 맵
+    col_map = {
+        "이름": "이름",
+        Col.YEAR: "납부년",
+        Col.MONTH: "납부월",
+        Col.STATUS: "상태",
+        Col.CODE: "코드",
+        Col.DEPOSIT: "납부액",
+        Col.STANDARD: "기준액",
+        Col.DIFF: "차액"
+    }
     
-    if format_dict:
-        styler = styler.format(format_dict, na_rep="")
+    html = '<div style="padding: 0 40px;"><table class="nordic-table">'
+    # 헤더
+    html += '<thead><tr>'
+    for col in display_df.columns:
+        label = col_map.get(col, col)
+        html += f'<th>{label}</th>'
+    html += '</tr></thead>'
     
-    # Render using st.dataframe which handles its own scrolling
-    st.dataframe(styler, width="stretch", height=500)
+    # 바디
+    html += '<tbody>'
+    for _, row in display_df.iterrows():
+        html += '<tr>'
+        for val in row:
+            # 숫자 천단위 콤마 처리
+            f_val = f"{val:,.0f}" if isinstance(val, (int, float)) else str(val)
+            html += f'<td>{f_val}</td>'
+        html += '</tr>'
+    html += '</tbody></table>'
+    
+    if len(df) > 200:
+        html += f'<p style="font-size: 11px; color: #9CA3AF; margin-top: 8px;">* Showing first 200 of {len(df)} records. Download Excel for full data.</p>'
+    
+    html += '</div>'
+    st.markdown(html, unsafe_allow_html=True)
 
 def reset_app():
     st.session_state["processing"] = False
     st.session_state["settings_expanded"] = True
     st.rerun()
 
-# Processing state affects the expander state
+# 처리 상태가 Expander(입력창) 열림 상태에 영향을 줌
 if "settings_expanded" not in st.session_state:
     st.session_state["settings_expanded"] = True
 if "uploaded_file" not in st.session_state:
     st.session_state["uploaded_file"] = None
 
-# 상단 설정 영역 (Collapsible Settings)
+# 상단 설정 영역 (접고 펼 수 있는 설정창)
 if st.session_state.get("df_errors") is not None or st.session_state.get("processing"):
-    # [New] 사용자의 요청에 따라 페이지 높이를 강제로 늘려주는 CSS 주입
-    # 입력 영역이 닫히기 전에 미리 공간을 확보
+    # [신규] 입력 영역이 닫히기 전에 미리 공간을 확보하여 스크롤 계산 유도
     st.markdown("""
         <style>
             .main .block-container {
@@ -149,91 +210,93 @@ if st.session_state.get("df_errors") is not None or st.session_state.get("proces
         </style>
     """, unsafe_allow_html=True)
 
-with st.expander("입력 및 설정", expanded=st.session_state["settings_expanded"]):
-    # 1. Define Layout Grid First
-    col_file, col_url = st.columns([1, 1.5], gap="large")
-    st.divider()
-    col_filter, col_config, col_action = st.columns([2, 2, 1], gap="medium")
+# 상단 설정 영역 (물리적 컬럼 카드 레이아웃)
+st.markdown("<div style='padding: 0 20px;'>", unsafe_allow_html=True) # 컬럼 패딩 보간
+c_file, c_url, c_filter, c_config = st.columns(4, gap="large")
 
-    # 2. Render Non-Blocking Elements First (File, Filters, Config, Button)
-    
-    # A. File Uploader
-    with col_file:
-        st.markdown("#### 1. 엑셀 파일 입력")
-        if st.session_state["uploaded_file"] is None:
-            uploaded = st.file_uploader("※정리본 엑셀 (raw 시트 포함)", type=["xlsx"], key="main_uploader")
-            if uploaded is not None:
-                st.session_state["uploaded_file"] = uploaded
-                st.rerun()
-            main_file = None
-        else:
-            main_file = st.session_state["uploaded_file"]
-            file_col1, file_col2 = st.columns([0.85, 0.15])
-            with file_col1:
-                st.info(f"📄 **{main_file.name}**")
-            with file_col2:
-                if st.button("❌", help="파일 제거"):
-                    st.session_state["uploaded_file"] = None
-                    st.rerun()
-
-    # B. Year Filter
-    with col_filter:
-        st.markdown("##### 📅 년도 필터")
-        c1, c2 = st.columns(2)
-        current_year = datetime.now().year
-        with c1:
-            start_year = st.number_input("시작 년도", value=2013, step=1)
-        with c2:
-            end_year = st.number_input("끝 년도", value=current_year, step=1)
-            
-    # C. Advanced Settings
-    with col_config:
-        st.markdown("##### ⚙️ 고급 설정")
-        c3, c4 = st.columns(2)
-        with c3:
-            sheet_name = st.text_input("시트명", value="raw")
-        with c4:
-            header_row = st.number_input("헤더행", min_value=0, value=1, step=1)
-        
-        # [Removed] use_first_payment_filter = st.checkbox("최초납부월 이전 미납 제외 기능 사용", value=True)
-        use_first_payment_filter = True # Fixed to True as per user request
-            
-    # D. Run Button
-    with col_action:
-        st.write("") # Spacer
-        st.write("") 
-        if st.button("🚀 처리 실행", type="primary", width="stretch", disabled=st.session_state["processing"]):
-            st.session_state["processing"] = True
-            st.session_state["settings_expanded"] = False # [Fix] 처리가 시작되면 설정창 자동 닫기
+# 1. 원본 엑셀 업로드
+with c_file:
+    st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
+    st.markdown("##### 원본 엑셀 업로드")
+    if st.session_state["uploaded_file"] is None:
+        uploaded = st.file_uploader(
+            "이곳에 파일을 드래그하거나 클릭하세요", 
+            type=["xlsx"], 
+            key="main_uploader", 
+            label_visibility="collapsed"
+        )
+        if uploaded is not None:
+            st.session_state["uploaded_file"] = uploaded
+            st.rerun()
+    else:
+        main_file = st.session_state["uploaded_file"]
+        st.success(f"준비됨: {main_file.name}") # st.info -> st.success (긍정적 메시지)
+        if st.button("파일 다시 선택", key="reset_file", use_container_width=True): # 버튼 텍스트 변경
+            st.session_state["uploaded_file"] = None
             st.rerun()
 
-    # 3. Render Blocking Elements Last (URL Check)
-    with col_url:
-        st.markdown("#### 2. 졸업생 명단 연결")
-        default_url = (
-            "https://docs.google.com/spreadsheets/d/"
-            "1GRPi_kP7V9YBAmS-jZKpUI9pwPCpeuaXBEGlGLHfL3g/edit?gid=0#gid=0"
-        )
-        gsheet_url = st.text_input("Google Sheets URL", value=default_url)
+# 2. 졸업생 명단 연결
+with c_url:
+    st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
+    st.markdown("##### 졸업생 명단 연결")
+    default_url = "https://docs.google.com/spreadsheets/d/1GRPi_kP7V9YBAmS-jZKpUI9pwPCpeuaXBEGlGLHfL3g/edit?gid=0#gid=0"
+    gsheet_url = st.text_input("URL 입력", value=default_url, label_visibility="collapsed")
+    
+    if gsheet_url:
+        if gsheet_url != st.session_state["previous_gsheet_url"] or st.session_state["cached_sheet_title"] is None:
+            with st.spinner("연결 중..."):
+                sheet_title = get_google_sheets_title(gsheet_url)
+                st.session_state["cached_sheet_title"] = sheet_title
+                st.session_state["previous_gsheet_url"] = gsheet_url
         
-        # Blocking logic here - won't prevent previous elements from showing
-        if gsheet_url and gsheet_url != "":
-            if (
-                gsheet_url != st.session_state["previous_gsheet_url"]
-                or st.session_state["cached_sheet_title"] is None
-            ):
-                with st.spinner("Wait..."):
-                    sheet_title = get_google_sheets_title(gsheet_url)
-                    st.session_state["cached_sheet_title"] = sheet_title
-                    st.session_state["previous_gsheet_url"] = gsheet_url
+        if st.session_state["cached_sheet_title"]:
+            st.markdown(f"""
+                <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #1F2937;">
+                    <span style="font-size: 18px;">🔗</span>
+                    <span style="font-weight: 700; font-size: 14px;">{st.session_state['cached_sheet_title']}</span>
+                </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+                <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #EF4444;">
+                    <span style="font-size: 14px; font-weight: 600;">⚠️ 연결 실패 (URL 확인)</span>
+                </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+            <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #9CA3AF;">
+                <span style="font-size: 13px; font-weight: 500;">졸업생 명단 URL을 입력해 주세요.</span>
+            </div>
+        """, unsafe_allow_html=True)
 
-            if st.session_state["cached_sheet_title"]:
-                st.caption(f"✅ 연결됨: **{st.session_state['cached_sheet_title']}**")
-            else:
-                st.caption("⚠️ 시트 제목을 불러올 수 없습니다.")
+# 3. 분석 기간 설정
+with c_filter:
+    st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
+    st.markdown("##### 분석 기간 설정")
+    cur_year = datetime.now().year
+    s_year = st.number_input("시작", value=2013, step=1)
+    e_year = st.number_input("종료", value=cur_year, step=1)
+
+# 4. 고급 설정
+with c_config:
+    st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
+    st.markdown("##### 고급 설정")
+    s_name = st.text_input("시트명", value="raw")
+    h_row = st.number_input("헤더행", min_value=0, value=1, step=1)
+    u_filter = True # 고정
+    
+st.markdown("</div>", unsafe_allow_html=True)
+
+# 중앙 정렬 분석 실행 버튼
+# st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True) # 스페이서 제거
+btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
+with btn_col2:
+    if st.button("분석 실행", type="primary", use_container_width=True, disabled=st.session_state["processing"]):
+        st.session_state["processing"] = True
+        st.rerun()
 
 def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, end_year, use_first_payment_filter):
-    # Clear previous results and errors
+    # 기존 결과 및 오류 메시지 초기화
     if "df_errors" in st.session_state: del st.session_state["df_errors"]
     if "result_summary" in st.session_state: del st.session_state["result_summary"]
     if "error_msg" in st.session_state: del st.session_state["error_msg"]
@@ -348,13 +411,13 @@ def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, en
             df_errors = df_errors.sort_values([Col.NAME, Col.YEAR, Col.MONTH, Col.CODE]).reset_index(drop=True)
             df_errors.index = df_errors.index + 1
 
-        # [Optimized] Cache Priming: Build excel bytes while spinner is still active.
-        # This populates the @st.cache_data for to_excel_bytes so there's no lag when the download button is rendered.
+        # [최적화] 캐시 준비: 스피너가 활성 상태일 때 엑셀 바이트를 미리 생성함.
+        # 이렇게 하면 다운로드 버튼이 렌더링될 때 지연 시간 없이 즉시 다운로드 가능함.
         base_name = getattr(main_file, "name", "result.xlsx")
         download_name = base_name.replace(".xlsx", "_오류검출.xlsx")
         _ = to_excel_bytes(df_errors, df_first_payment, download_name)
 
-        # Persist results
+        # 결과 저장
         st.session_state["df_errors"] = df_errors
         st.session_state["df_first_payment"] = df_first_payment
         st.session_state["download_name"] = download_name
@@ -379,19 +442,20 @@ def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, en
         st.session_state["error_msg"] = f"작업 중 오류 발생: {e}"
         st.session_state["error_detail"] = traceback.format_exc()
 
-# Main logic execution
+# 메인 로직 실행
 if st.session_state["processing"]:
     st.divider()
     st.subheader("⏳ 처리 실행 중...")
     
     with st.spinner("데이터 처리 중입니다..."):
-        run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, end_year, use_first_payment_filter)
+        # 레이아웃에서 정의된 변수명(main_file, gsheet_url, s_name, h_row, s_year, e_year, u_filter) 사용
+        run_processing(main_file, gsheet_url, s_name, h_row, s_year, e_year, u_filter)
     
     st.session_state["processing"] = False
-    st.session_state["settings_expanded"] = False # [Fix] 자동으로 설정 창을 닫아 스크롤 계산 유도
+    st.session_state["settings_expanded"] = False
     st.rerun()
 
-# Render persisted results or errors
+# 저장된 결과 또는 오류 렌더링
 if "error_msg" in st.session_state:
     st.error(st.session_state["error_msg"])
     if "error_detail" in st.session_state:
@@ -419,13 +483,27 @@ if "df_errors" in st.session_state and isinstance(st.session_state["df_errors"],
         # 요약 정보 렌더링
         st.success(f"✅ 처리가 완료되었습니다. (소요 시간: {duration:.2f}초)")
         
-        col_sum1, col_sum2, col_sum3 = st.columns(3)
-        with col_sum1:
-            st.markdown(f"**📅 검출 대상 기간**  \n{period}")
-        with col_sum2:
-            st.markdown(f"**📊 납부내역 건수**  \n총 {total_grad:,}건 (기간내: {period_count:,}건)")
-        with col_sum3:
-            st.markdown(f"**🔍 오류 검출 내역**  \n총 {total_errors}건 (미납: {c_miss}, 부족: {c_under}, 초과: {c_over})")
+        # 노르딕 브루탈리스트 KPI 위젯
+        st.markdown(f"""
+            <div style="display: flex; gap: 24px; margin-bottom: 32px; padding: 0 40px;">
+                <div class="nordic-card" style="flex: 1;">
+                    <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">분석 대상 건수</p>
+                    <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{period_count:,}</p>
+                </div>
+                <div class="nordic-card-accent" style="flex: 1;">
+                    <p style="font-size: 12px; font-weight: 900; color: #1F2937; margin-bottom: 8px;">미납 내역 건수</p>
+                    <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_miss} 건</p>
+                </div>
+                <div class="nordic-card" style="flex: 1;">
+                    <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">납부 부족</p>
+                    <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_under} 건</p>
+                </div>
+                <div class="nordic-card" style="flex: 1;">
+                    <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">초과 납부</p>
+                    <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_over} 건</p>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
         
         if c_filt > 0:
             st.info(f"💡 **참고:** {c_filt}건의 미납 내역이 '최초 납부월 이전'이라 제외되었습니다.")
@@ -449,7 +527,7 @@ if "df_errors" in st.session_state and isinstance(st.session_state["df_errors"],
             file_name=out_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width="stretch",
-            type="primary", # Added color
+            type="primary", # 색상 추가
         )
 
     # 탭 구성 (오류 검출 결과가 기본)

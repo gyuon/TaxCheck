@@ -10,7 +10,7 @@ from constants import Col, Status, FundName, FundCode, RESULT_COLUMNS, SheetName
 
 def normalize_names(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Centralized helper to strip whitespace from '이름' column.
+    이름 열의 공백을 제거하는 공통 헬퍼 함수.
     """
     if Col.NAME in df.columns:
         df[Col.NAME] = df[Col.NAME].astype(str).str.strip()
@@ -62,7 +62,7 @@ def extract_first_payment_month(df: pd.DataFrame) -> pd.DataFrame:
     valid_cols = [c for c in df_first.columns if not str(c).startswith("Unnamed") and c not in exclude_cols]
     df_first = df_first[valid_cols]
     
-    # 3. 정렬 및 중복 제거 (가장 과거 날짜 보장)
+    # 3. 정렬 및 중복 제거 (가장 과거 날짜 유지)
     df_first = df_first.sort_values([Col.NAME, Col.YEAR, Col.MONTH], ascending=[True, True, True])
     df_first = df_first.drop_duplicates(subset=[Col.NAME], keep="first")
     df_first = df_first.reset_index(drop=True)
@@ -103,7 +103,7 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
     pivot.columns = ["운영_입금", "협력_입금", "복지_입금"]
     pivot = pivot.reset_index()
     
-    # 원본 데이터에서 해당 그룹에 어떤 코드들이 존재하는지 확인 (입금액 0원 등 엣지케이스 대응)
+    # 원본 데이터에서 해당 그룹에 어떤 코드들이 존재하는지 확인 (입금액 0원 등 특이 케이스 대응)
     existence = target_df.groupby([Col.NAME, Col.YEAR, Col.MONTH])[Col.CODE1].apply(set)
     valid_indices = [idx for idx, codes in existence.items() if 1 in codes and (2 in codes or 3 in codes)]
     
@@ -157,7 +157,7 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
             std_min = op_deposit
             std_max = op_deposit
 
-        # [Optimized] 공통 수식 생성 (× 기호 및 % 형식 적용)
+        # [최적화] 공통 수식 생성 (× 기호 및 % 형식 적용)
         formula_series = "운영기금 총액 × " + (ratios * 100).astype(int).astype(str) + "%"
 
         # 부족 검사
@@ -238,7 +238,7 @@ def generate_missed_months(df: pd.DataFrame, df_first: pd.DataFrame = None) -> t
     # 즉, 그룹핑 기준은 "유효한 납부내역이 하나라도 있는 (이름, 해당년, 해당월)"
     valid_rows = target_df[target_df["canonical"] > 0].copy()
     
-    # [Mod] 그룹핑 기준 변경: 유효 코드가 없더라도, 어쨌든 데이터에 존재하는 월이면 미납 검사 대상이 되어야 함.
+    # [수정] 그룹핑 기준 변경: 유효 코드가 없더라도, 어쨌든 데이터에 존재하는 월이면 미납 검사 대상이 되어야 함.
     # 따라서 groups는 target_df 전체에서 추출
     groups = target_df[[Col.NAME, Col.YEAR, Col.MONTH]].drop_duplicates()
     
@@ -261,7 +261,7 @@ def generate_missed_months(df: pd.DataFrame, df_first: pd.DataFrame = None) -> t
     if missed.empty:
         return pd.DataFrame(), 0
 
-    # [New] 최초 납부월 이전 데이터 필터링
+    # [신규] 최초 납부월 이전 데이터 필터링
     filtered_count = 0 
     if df_first is not None and not df_first.empty:
         # 1. df_first에서 (이름) -> (Year * 12 + Month) 매핑 생성
@@ -283,12 +283,12 @@ def generate_missed_months(df: pd.DataFrame, df_first: pd.DataFrame = None) -> t
                 # 에러 발생 시 데이터 컨텍스트 포함
                 raise ValueError(f"데이터 검증 중 오류 발생 (이름: {row.get(Col.NAME,'?')}, 년월: {row.get(Col.YEAR,'?')}-{row.get(Col.MONTH,'?')}): {e}")
         
-        # Calculate mask
-        # [Fix] FutureWarning: Downcasting object dtype arrays on .fillna is deprecated.
+        # 마스크 계산
+        # [수정] .fillna 시 object 타입 배열의 다운캐스팅 FutureWarning 해결
         mask_series = missed.apply(is_after_first, axis=1)
-        # Ensure result is object dtype then convert to bool after filling
+        # 결과가 object 타입인지 확인 후 결측치를 채우고 bool 타입으로 변환
         mask = mask_series.infer_objects(copy=False).fillna(False).astype(bool)
-        # Count filtered out
+        # 제외된 건수 계산
         filtered_count = (~mask).sum()
         
         missed = missed[mask]
@@ -301,8 +301,8 @@ def generate_missed_months(df: pd.DataFrame, df_first: pd.DataFrame = None) -> t
     code_map = {1: FundCode.OPERATING, 2: FundCode.COOPERATION, 3: FundCode.WELFARE}
     
     missed[Col.FUND_NAME] = missed["canonical"].map(label_map)
-    # [Fix] FutureWarning: Setting an item of incompatible dtype is deprecated
-    # Ensure Col.CODE is treated as object/string from the start or use loc
+    # [수정] 호환되지 않는 dtype 설정 시 발생하는 FutureWarning 해결
+    # Col.CODE가 처음부터 object/문자열로 처리되도록 함
     missed[Col.CODE] = missed["canonical"].map(code_map).astype(str)
     
     # [수정] 운영기금(1) 미납 시 코드를 "11~17"로 변경
@@ -329,7 +329,7 @@ def to_excel_bytes(df_first, df_errors, output_filename):
     def prepare_sheet(df, exclude_cols=None):
         if df.empty:
             return None
-        # Remove Unnamed columns
+        # Unnamed 컬럼 제거
         cols = [c for c in df.columns if not str(c).startswith("Unnamed")]
         if exclude_cols:
             cols = [c for c in cols if c not in exclude_cols]
