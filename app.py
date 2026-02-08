@@ -136,6 +136,47 @@ st.markdown("""
         border-color: #1F2937 !important;
         opacity: 1 !important;
     }
+
+    [data-testid="stFileUploaderDropzone"] {
+        border-radius: 0px !important;    /* 테두리 곡률 제거 */
+        background-color: #FFF9E6 !important; /* 배경색 흰색으로 변경 */
+    }
+
+    /* 1. "Drag and drop file here" 문구 수정 */
+    [data-testid="stFileUploaderDropzoneInstructions"] div span:first-child {
+        font-size: 0px; /* 기존 텍스트 숨김 */
+    }
+    [data-testid="stFileUploaderDropzoneInstructions"] div span:first-child::after {
+        content: "여기에 파일을 끌어다 놓으세요";
+        font-size: 16px; /* Streamlit 기본 폰트 크기 */
+        visibility: visible;
+        display: block;
+    }
+
+    /* 2. "Browse files" 버튼 문구 수정 */
+    [data-testid="stBaseButton-secondary"] {
+        font-size: 0px !important; /* 기존 'Browse files' 숨김 */
+        border-radius: 0px !important;
+        background-color: #FFFFFF !important;
+    }
+    [data-testid="stBaseButton-secondary"]::after {
+        content: "파일 찾기";
+        font-size: 14px; /* 버튼 텍스트 크기 */
+        visibility: visible;
+        display: block;
+    }
+
+    /* 3. (선택사항) "Limit 20MB per file..." 문구 수정 */
+    [data-testid="stFileUploaderDropzoneInstructions"] div span:last-child {
+        font-size: 0px;
+    }
+    [data-testid="stFileUploaderDropzoneInstructions"] div span:last-child::after {
+        content: "최대 20MB • XLSX 파일만 가능";
+        font-size: 12px;
+        visibility: visible;
+        display: block;
+        margin-top: 5px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
