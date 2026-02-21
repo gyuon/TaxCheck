@@ -58,5 +58,5 @@ class FundCode:
 # 결과 시트의 컬럼 순서
 RESULT_COLUMNS = [
     Col.NAME, Col.YEAR, Col.MONTH, Col.FUND_NAME, Col.CODE,
-    Col.DEPOSIT, Col.STATUS, Col.STANDARD, Col.FORMULA, Col.DIFF, Col.REMARKS
+    Col.DEPOSIT, Col.STANDARD, Col.FORMULA, Col.STATUS, Col.DIFF, Col.REMARKS
 ]

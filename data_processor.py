@@ -4,7 +4,7 @@ from io import BytesIO
 import requests
 import re
 from openpyxl.utils import get_column_letter
-from openpyxl.styles import Alignment
+from openpyxl.styles import Alignment, PatternFill, Font, Border, Side
 import numpy as np
 from constants import Col, Status, FundName, FundCode, RESULT_COLUMNS, SheetName
 
@@ -353,9 +353,9 @@ def to_excel_bytes(df_first, df_errors, output_filename):
             ws.column_dimensions["E"].width = 9   # 기금명
             ws.column_dimensions["F"].width = 8   # 코드
             ws.column_dimensions["G"].width = 12  # 납부금액
-            ws.column_dimensions["H"].width = 9   # 상태
-            ws.column_dimensions["I"].width = 12  # 기준금액
-            ws.column_dimensions["J"].width = 26  # 기준금액 산출법
+            ws.column_dimensions["H"].width = 12  # 기준금액
+            ws.column_dimensions["I"].width = 26  # 기준금액 산출법
+            ws.column_dimensions["J"].width = 9   # 상태
             ws.column_dimensions["K"].width = 12  # 차액
             ws.column_dimensions["L"].width = 41  # 비고
             
@@ -368,23 +368,164 @@ def to_excel_bytes(df_first, df_errors, output_filename):
                 cell.alignment = Alignment(horizontal="center")
 
             # 데이터 행 정렬 및 포맷팅 (2행부터)
-            for row in ws.iter_rows(min_row=2, max_row=len(df_e) + 1):
-                for idx, cell in enumerate(row):
-                    # 0: index(번호), 1: 이름, 2: 납부년, 3: 납부월, 4: 기금명, 5: 코드
-                    # 6: 납부금액, 7: 상태, 8: 기준금액, 9: 기준금액 산출법, 10: 차액, 11: 비고
+            # 고대비 노르딕 브루탈리즘 색상 팔레트 정의 (Updated - Darker & Warmer)
+            fills = {
+                1: PatternFill(start_color="FFFDE047", end_color="FFFDE047", fill_type="solid"), # 이름 (Yellow 300 - Vibrant Yellow)
+                6: PatternFill(start_color="FFFDE047", end_color="FFFDE047", fill_type="solid"), # 납부금액 (Yellow 300)
+                7: PatternFill(start_color="FFE9D5FF", end_color="FFE9D5FF", fill_type="solid"), # 기준금액 (Purple 200)
+                8: PatternFill(start_color="FFF3E8FF", end_color="FFF3E8FF", fill_type="solid"), # 기준금액 산출법 (Purple 100)
+                # 차액 배경색 제거 (idx=10)
+            }
+
+            # 테두리 스타일 정의
+            thin_border = Border(
+                left=Side(style='thin', color='FF9CA3AF'),
+                right=Side(style='thin', color='FF9CA3AF'),
+                top=Side(style='thin', color='FF9CA3AF'),
+                bottom=Side(style='thin', color='FF9CA3AF')
+            )
+            
+            thick_bottom_border = Border(
+                left=Side(style='thin', color='FF9CA3AF'),
+                right=Side(style='thin', color='FF9CA3AF'),
+                top=Side(style='thin', color='FF9CA3AF'),
+                bottom=Side(style='thick', color='FF9CA3AF')  # 3배 두께
+            )
+            
+            # 헤더에 배경색 및 두꺼운 하단 테두리 적용
+            for cell in ws[1]:
+                col_idx_zero = cell.col_idx - 1
+                if col_idx_zero in fills:
+                    cell.fill = fills[col_idx_zero]
+                cell.border = thick_bottom_border
+
+            # 동일 그룹 식별 (이름/납부년/납부월) - 그룹 인덱스 추적
+            group_row_colors = {}  # {excel_row: color_index} - 홀수/짝수 그룹 구분
+            
+            if not df_e.empty:
+                groups = []
+                current_group_start = 0
+                current_key = None
+                
+                for idx, (i, row_data) in enumerate(df_e.iterrows()):
+                    key = (row_data[Col.NAME], row_data[Col.YEAR], row_data[Col.MONTH])
                     
+                    if current_key is None:
+                        current_key = key
+                        current_group_start = idx
+                    elif key != current_key:
+                        groups.append((current_group_start, idx - 1, current_key))
+                        current_key = key
+                        current_group_start = idx
+                
+                if current_key is not None:
+                    groups.append((current_group_start, len(df_e) - 1, current_key))
+                
+                # 2개 이상 행을 가진 그룹에 대해 홀수/짝수 인덱스 할당
+                group_counter = 0
+                for start_idx, end_idx, key in groups:
+                    if end_idx > start_idx:  # 2개 이상 행을 가진 그룹만
+                        color_index = group_counter % 2  # 0(짝수) 또는 1(홀수)
+                        for row_idx in range(start_idx, end_idx + 1):
+                            excel_row = row_idx + 2  # 엑셀 행 번호
+                            group_row_colors[excel_row] = color_index
+                        group_counter += 1
+
+            # 데이터 행 스타일 적용
+            red_font = Font(color='FFDC2626', bold=True)  # 진한 붉은색 (홀수 그룹)
+            blue_font = Font(color='FF0066FF', bold=True)  # 밝고 쨍한 파란색 (짝수 그룹)
+            
+            for row in ws.iter_rows(min_row=2, max_row=len(df_e) + 1):
+                excel_row_num = row[0].row
+                color_index = group_row_colors.get(excel_row_num)  # None, 0(짝수), 1(홀수)
+                
+                # 현재 행의 기금명 값을 먼저 확인 (코드 컬럼 배경색 동기화용)
+                fund_name_cell = ws.cell(row=excel_row_num, column=5)  # 기금명은 5번째 컬럼 (E열)
+                fund_value = str(fund_name_cell.value).strip() if fund_name_cell.value else ""
+                
+                for idx, cell in enumerate(row):
+                    # 기본 배경색 적용
+                    if idx in fills:
+                        cell.fill = fills[idx]
+                    
+                    # 기본 테두리 적용
+                    cell.border = thin_border
+                    
+                    # 그룹 행의 번호/이름/납부년/납부월에 교대로 색상 적용
+                    if color_index is not None and idx in [0, 1, 2, 3]:  # 번호, 이름, 납부년, 납부월
+                        if color_index == 1:  # 홀수 그룹
+                            cell.font = red_font
+                        else:  # 짝수 그룹
+                            cell.font = blue_font
+
+                    # [신규] 기금명 컬럼(idx=4)에 배경색 적용
+                    if idx == 4:  # 기금명
+                        if fund_value == "운영":
+                            cell.fill = PatternFill(start_color="FF69A2B0", end_color="FF69A2B0", fill_type="solid")
+                        elif fund_value == "협력":
+                            cell.fill = PatternFill(start_color="FFFFCAB1", end_color="FFFFCAB1", fill_type="solid")
+                        elif fund_value == "복지":
+                            cell.fill = PatternFill(start_color="FF659157", end_color="FF659157", fill_type="solid")
+                    
+                    # [신규] 코드 컬럼(idx=5)에 기금명과 동일한 배경색 적용
+                    if idx == 5:  # 코드
+                        if fund_value == "운영":
+                            cell.fill = PatternFill(start_color="FF69A2B0", end_color="FF69A2B0", fill_type="solid")
+                        elif fund_value == "협력":
+                            cell.fill = PatternFill(start_color="FFFFCAB1", end_color="FFFFCAB1", fill_type="solid")
+                        elif fund_value == "복지":
+                            cell.fill = PatternFill(start_color="FF659157", end_color="FF659157", fill_type="solid")
+                    
+                    # [신규] 상태 컬럼(idx=9)에 텍스트 색상 및 아이콘 적용
+                    if idx == 9:  # 상태 (컬럼 순서 변경 후)
+                        status_value = str(cell.value).strip() if cell.value else ""
+                        if status_value == "미납":
+                            cell.font = Font(color='FF9CA3AF', bold=True)  # 연한 회색 (Gray 400)
+                            cell.value = "— " + status_value  # em dash 아이콘
+                        elif status_value == "부족":
+                            cell.font = Font(color='FFEF4444', bold=True)  # 빨간색 (Red 500)
+                            cell.value = "↓ " + status_value  # 아래 화살표
+                        elif status_value == "초과":
+                            cell.font = Font(color='FF059669', bold=True)  # 진한 녹색 (Emerald 600)
+                            cell.value = "↑ " + status_value  # 위 화살표
+                    
+                    # [신규] 차액 컬럼(idx=10)에 상태와 동일한 텍스트 색상 적용 및 양수에 + 기호 추가
+                    if idx == 10:  # 차액
+                        # 현재 행의 상태 값 확인 (상태는 이제 10번째 컬럼, J열)
+                        status_cell = ws.cell(row=excel_row_num, column=10)  # 상태는 10번째 컬럼 (J열)
+                        status_value = str(status_cell.value).strip() if status_cell.value else ""
+                        
+                        # 상태에 따라 텍스트 색상 적용
+                        if "미납" in status_value:
+                            cell.font = Font(color='FF9CA3AF', bold=True)  # 연한 회색
+                        elif "부족" in status_value:
+                            cell.font = Font(color='FFEF4444', bold=True)  # 빨간색
+                        elif "초과" in status_value:
+                            cell.font = Font(color='FF059669', bold=True)  # 진한 녹색
+                        
+                        # 양수 값에 + 기호 추가
+                        if cell.value is not None and isinstance(cell.value, (int, float)) and cell.value > 0:
+                            cell.number_format = '+#,##0;-#,##0;0'
+
+                    # 정렬 및 포맷
                     if idx <= 5:  # 번호 ~ 코드
                         cell.alignment = Alignment(horizontal="center")
-                    elif idx in [6, 8, 10]:  # 납부금액, 기준금액, 차액
+                    elif idx in [6, 7]:  # 납부금액, 기준금액
                         cell.alignment = Alignment(horizontal="right")
                         if cell.value is not None:
                             cell.number_format = "#,##0"
-                    elif idx == 7:  # 상태
+                    elif idx == 10:  # 차액 (위에서 이미 포맷 설정)
+                        cell.alignment = Alignment(horizontal="right")
+                    elif idx == 9:  # 상태
                         cell.alignment = Alignment(horizontal="center")
-                    elif idx == 9:  # 기준금액 산출법
+                    elif idx == 8:  # 기준금액 산출법
                         cell.alignment = Alignment(horizontal="left")
                     else:
                         cell.alignment = Alignment(horizontal="center")
+            
+            # 헤더 행 고정 (2행부터 스크롤)
+            ws.freeze_panes = "A2"
+
 
         # 2. 최초납부월 시트
         df_f = prepare_sheet(df_first, exclude_cols=["구분", "코드3"])

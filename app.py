@@ -108,8 +108,8 @@ st.markdown("""
         padding-bottom: 6px !important;
     }
 
-    /* 분석 실행 버튼 스타일: 고대비 노르딕 브루탈리즘 */
-    div.stButton > button {
+    /* 분석 실행 및 다운로드 버튼 스타일 통합: 고대비 노르딕 브루탈리즘 */
+    div.stButton > button, div.stDownloadButton > button {
         background-color: #1F2937 !important;
         color: #FFFFFF !important;
         border: 3px solid #000000 !important;
@@ -120,11 +120,12 @@ st.markdown("""
         transition: all 0.1s;
         width: 100% !important;
     }
-    div.stButton > button p, div.stButton > button span {
+    div.stButton > button p, div.stButton > button span,
+    div.stDownloadButton > button p, div.stDownloadButton > button span {
         color: #FFFFFF !important;
         font-weight: 900 !important;
     }
-    div.stButton > button:hover {
+    div.stButton > button:hover, div.stDownloadButton > button:hover {
         background-color: #374151 !important;
         box-shadow: 6px 6px 0px #9CA3AF;
         transform: translate(-1px, -1px);
@@ -154,12 +155,12 @@ st.markdown("""
     }
 
     /* 2. "Browse files" 버튼 문구 수정 */
-    [data-testid="stBaseButton-secondary"] {
+    [data-testid="stFileUploader"] [data-testid="stBaseButton-secondary"] {
         font-size: 0px !important; /* 기존 'Browse files' 숨김 */
         border-radius: 0px !important;
         background-color: #FFFFFF !important;
     }
-    [data-testid="stBaseButton-secondary"]::after {
+    [data-testid="stFileUploader"] [data-testid="stBaseButton-secondary"]::after {
         content: "파일 찾기";
         font-size: 14px; /* 버튼 텍스트 크기 */
         visibility: visible;
@@ -230,8 +231,14 @@ def render_styled_table(df):
     st.markdown(html, unsafe_allow_html=True)
 
 def reset_app():
-    st.session_state["processing"] = False
-    st.session_state["settings_expanded"] = True
+    keys_to_drop = [
+        "df_errors", "df_first_payment", "result_summary", 
+        "error_msg", "error_detail", "run_params", "processing",
+        "uploaded_file", "cached_sheet_title", "download_name"
+    ]
+    for k in keys_to_drop:
+        if k in st.session_state:
+            del st.session_state[k]
     st.rerun()
 
 # 처리 상태가 Expander(입력창) 열림 상태에 영향을 줌
@@ -252,89 +259,100 @@ if st.session_state.get("df_errors") is not None or st.session_state.get("proces
     """, unsafe_allow_html=True)
 
 # 상단 설정 영역 (물리적 컬럼 카드 레이아웃)
-st.markdown("<div style='padding: 0 20px;'>", unsafe_allow_html=True) # 컬럼 패딩 보간
-c_file, c_url, c_filter, c_config = st.columns(4, gap="large")
+if "df_errors" not in st.session_state and not st.session_state.get("processing", False):
+    st.markdown("<div style='padding: 0 20px;'>", unsafe_allow_html=True) # 컬럼 패딩 보간
+    c_file, c_url, c_filter, c_config = st.columns(4, gap="large")
 
-# 1. 원본 엑셀 업로드
-with c_file:
-    st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
-    st.markdown("##### 원본 엑셀 업로드")
-    if st.session_state["uploaded_file"] is None:
-        uploaded = st.file_uploader(
-            "이곳에 파일을 드래그하거나 클릭하세요", 
-            type=["xlsx"], 
-            key="main_uploader", 
-            label_visibility="collapsed"
-        )
-        if uploaded is not None:
-            st.session_state["uploaded_file"] = uploaded
-            st.rerun()
-    else:
-        main_file = st.session_state["uploaded_file"]
-        st.success(f"준비됨: {main_file.name}") # st.info -> st.success (긍정적 메시지)
-        if st.button("파일 다시 선택", key="reset_file", use_container_width=True): # 버튼 텍스트 변경
-            st.session_state["uploaded_file"] = None
-            st.rerun()
+    # 1. 원본 엑셀 업로드
+    with c_file:
+        st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
+        st.markdown("##### 원본 엑셀 업로드")
+        if st.session_state["uploaded_file"] is None:
+            uploaded = st.file_uploader(
+                "이곳에 파일을 드래그하거나 클릭하세요", 
+                type=["xlsx"], 
+                key="main_uploader", 
+                label_visibility="collapsed"
+            )
+            if uploaded is not None:
+                st.session_state["uploaded_file"] = uploaded
+                st.rerun()
+        else:
+            main_file = st.session_state["uploaded_file"]
+            st.success(f"준비됨: {main_file.name}") # st.info -> st.success (긍정적 메시지)
+            if st.button("파일 다시 선택", key="reset_file", use_container_width=True): # 버튼 텍스트 변경
+                st.session_state["uploaded_file"] = None
+                st.rerun()
 
-# 2. 졸업생 명단 연결
-with c_url:
-    st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
-    st.markdown("##### 졸업생 명단 연결")
-    default_url = "https://docs.google.com/spreadsheets/d/1GRPi_kP7V9YBAmS-jZKpUI9pwPCpeuaXBEGlGLHfL3g/edit?gid=0#gid=0"
-    gsheet_url = st.text_input("URL 입력", value=default_url, label_visibility="collapsed")
-    
-    if gsheet_url:
-        if gsheet_url != st.session_state["previous_gsheet_url"] or st.session_state["cached_sheet_title"] is None:
-            with st.spinner("연결 중..."):
-                sheet_title = get_google_sheets_title(gsheet_url)
-                st.session_state["cached_sheet_title"] = sheet_title
-                st.session_state["previous_gsheet_url"] = gsheet_url
+    # 2. 졸업생 명단 연결
+    with c_url:
+        st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
+        st.markdown("##### 졸업생 명단 연결")
+        default_url = "https://docs.google.com/spreadsheets/d/1GRPi_kP7V9YBAmS-jZKpUI9pwPCpeuaXBEGlGLHfL3g/edit?gid=0#gid=0"
+        gsheet_url = st.text_input("URL 입력", value=default_url, label_visibility="collapsed")
         
-        if st.session_state["cached_sheet_title"]:
-            st.markdown(f"""
-                <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #1F2937;">
-                    <span style="font-size: 18px;">🔗</span>
-                    <span style="font-weight: 700; font-size: 14px;">{st.session_state['cached_sheet_title']}</span>
-                </div>
-            """, unsafe_allow_html=True)
+        if gsheet_url:
+            if gsheet_url != st.session_state["previous_gsheet_url"] or st.session_state["cached_sheet_title"] is None:
+                with st.spinner("연결 중..."):
+                    sheet_title = get_google_sheets_title(gsheet_url)
+                    st.session_state["cached_sheet_title"] = sheet_title
+                    st.session_state["previous_gsheet_url"] = gsheet_url
+            
+            if st.session_state["cached_sheet_title"]:
+                st.markdown(f"""
+                    <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #1F2937;">
+                        <span style="font-size: 18px;">🔗</span>
+                        <span style="font-weight: 700; font-size: 14px;">{st.session_state['cached_sheet_title']}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                    <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #EF4444;">
+                        <span style="font-size: 14px; font-weight: 600;">⚠️ 연결 실패 (URL 확인)</span>
+                    </div>
+                """, unsafe_allow_html=True)
         else:
             st.markdown("""
-                <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #EF4444;">
-                    <span style="font-size: 14px; font-weight: 600;">⚠️ 연결 실패 (URL 확인)</span>
+                <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #9CA3AF;">
+                    <span style="font-size: 13px; font-weight: 500;">졸업생 명단 URL을 입력해 주세요.</span>
                 </div>
             """, unsafe_allow_html=True)
-    else:
-        st.markdown("""
-            <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #9CA3AF;">
-                <span style="font-size: 13px; font-weight: 500;">졸업생 명단 URL을 입력해 주세요.</span>
-            </div>
-        """, unsafe_allow_html=True)
 
-# 3. 분석 기간 설정
-with c_filter:
-    st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
-    st.markdown("##### 분석 기간 설정")
-    cur_year = datetime.now().year
-    s_year = st.number_input("시작", value=2013, step=1)
-    e_year = st.number_input("종료", value=cur_year, step=1)
+    # 3. 분석 기간 설정
+    with c_filter:
+        st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
+        st.markdown("##### 분석 기간 설정")
+        cur_year = datetime.now().year
+        s_year = st.number_input("시작", value=2013, step=1)
+        e_year = st.number_input("종료", value=cur_year, step=1)
 
-# 4. 고급 설정
-with c_config:
-    st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
-    st.markdown("##### 고급 설정")
-    s_name = st.text_input("시트명", value="raw")
-    h_row = st.number_input("헤더행", min_value=0, value=1, step=1)
-    u_filter = True # 고정
-    
-st.markdown("</div>", unsafe_allow_html=True)
+    # 4. 고급 설정
+    with c_config:
+        st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
+        st.markdown("##### 고급 설정")
+        s_name = st.text_input("시트명", value="raw")
+        h_row = st.number_input("헤더행", min_value=0, value=1, step=1)
+        u_filter = True # 고정
+        
+    st.markdown("</div>", unsafe_allow_html=True)
 
-# 중앙 정렬 분석 실행 버튼
-# st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True) # 스페이서 제거
-btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
-with btn_col2:
-    if st.button("분석 실행", type="primary", use_container_width=True, disabled=st.session_state["processing"]):
-        st.session_state["processing"] = True
-        st.rerun()
+    # 중앙 정렬 분석 실행 버튼
+    # st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True) # 스페이서 제거
+    btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
+    with btn_col2:
+        if st.button("분석 실행", type="primary", use_container_width=True, disabled=st.session_state["processing"]):
+            # 실행 시점의 파라미터 캡처
+            st.session_state["run_params"] = {
+                "main_file": st.session_state.get("uploaded_file"),
+                "gsheet_url": gsheet_url,
+                "sheet_name": s_name,
+                "header_row": h_row,
+                "start_year": s_year,
+                "end_year": e_year,
+                "use_filter": u_filter
+            }
+            st.session_state["processing"] = True
+            st.rerun()
 
 def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, end_year, use_first_payment_filter):
     # 기존 결과 및 오류 메시지 초기화
@@ -484,13 +502,22 @@ def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, en
         st.session_state["error_detail"] = traceback.format_exc()
 
 # 메인 로직 실행
-if st.session_state["processing"]:
+if st.session_state.get("processing"):
     st.divider()
     st.subheader("⏳ 처리 실행 중...")
     
     with st.spinner("데이터 처리 중입니다..."):
-        # 레이아웃에서 정의된 변수명(main_file, gsheet_url, s_name, h_row, s_year, e_year, u_filter) 사용
-        run_processing(main_file, gsheet_url, s_name, h_row, s_year, e_year, u_filter)
+        # 캡처된 파라미터 사용
+        params = st.session_state.get("run_params", {})
+        run_processing(
+            params.get("main_file"), 
+            params.get("gsheet_url"), 
+            params.get("sheet_name"), 
+            params.get("header_row"), 
+            params.get("start_year"), 
+            params.get("end_year"), 
+            params.get("use_filter")
+        )
     
     st.session_state["processing"] = False
     st.session_state["settings_expanded"] = False
@@ -552,7 +579,7 @@ if "df_errors" in st.session_state and isinstance(st.session_state["df_errors"],
             st.info("검출된 오류나 미납 내역이 없습니다.")
 
     # 상단 헤더 및 다운로드 버튼
-    header_col, action_col = st.columns([1, 0.25])
+    header_col, action_col = st.columns([1, 0.4]) # action_col 넓이 확보
     with header_col:
         st.subheader("분석 결과")
     with action_col:
@@ -562,14 +589,20 @@ if "df_errors" in st.session_state and isinstance(st.session_state["df_errors"],
             st.session_state["df_errors"],
             dl_name,
         )
-        st.download_button(
-            label="결과 엑셀 다운로드",
-            data=data,
-            file_name=out_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
-            type="primary", # 색상 추가
-        )
+        
+        # 버튼 그룹 (다운로드 + 새로 분석하기)
+        b_dl, b_new = st.columns([1.5, 1], gap="small")
+        with b_dl:
+            st.download_button(
+                label="결과 엑셀 다운로드",
+                data=data,
+                file_name=out_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+        with b_new:
+            if st.button("새로 분석하기", use_container_width=True):
+                reset_app()
 
     # 탭 구성 (오류 검출 결과가 기본)
     tab1, tab2 = st.tabs(["오류 검출 결과", "최초 납부월"])
