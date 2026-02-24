@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 import time
 import streamlit.components.v1 as components
+from st_aggrid import AgGrid
 from data_processor import (
     get_google_sheets_title, 
     extract_first_payment_month, 
@@ -229,6 +230,138 @@ def render_styled_table(df):
     
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
+
+def render_summary_table(df):
+    """
+    이름별 오류 요약 테이블 렌더링 (AgGrid 사용)
+    """
+    if df.empty:
+        st.write("데이터가 없습니다.")
+        return
+    
+    # 합계 계산
+    summary_row = {
+        "이름": f"총 {len(df)}명",
+        "미납": df["미납"].sum(),
+        "부족": df["부족"].sum(),
+        "초과": df["초과"].sum(),
+        "오류건수 합계": df["오류건수 합계"].sum()
+    }
+    
+    # 합계 행 추가
+    grid_data = df.to_dict("records")
+    grid_data.insert(0, summary_row)
+    
+    # 동적 key 생성 (rerun 시마다 새로운 인스턴스)
+    import time
+    dynamic_key = f"ag_grid_summary_{int(time.time())}"
+    
+    # AgGrid 표시
+    grid_response = AgGrid(
+        pd.DataFrame(grid_data),
+        height=400,
+        theme="streamlit",
+        key=dynamic_key,
+        allow_unsafe_jscode=True,
+        defaultColDef={
+            "resizable": True,
+            "sortable": True,
+            "filter": True,
+            "editable": False
+        }
+    )
+    
+    # JavaScript로 스타일 주입
+    st.markdown("""
+    <script>
+    // AgGrid가 렌더링된 후 스타일 적용
+    function applyStyles() {
+        const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                if (mutation.addedNodes.length > 0) {
+                    const grid = document.querySelector('.ag-root-wrapper');
+                    if (grid) {
+                        // 헤더 스타일
+                        const headers = grid.querySelectorAll('.ag-header-cell');
+                        headers.forEach(h => {
+                            h.style.backgroundColor = '#1F2937';
+                            h.style.color = '#FFFFFF';
+                            h.style.fontWeight = '900';
+                            h.style.fontSize = '19px';
+                            h.style.textAlign = 'center';
+                            h.style.borderBottom = '2px solid #000000';
+                        });
+                        
+                        // 데이터 셀 스타일
+                        const cells = grid.querySelectorAll('.ag-cell');
+                        cells.forEach(c => {
+                            c.style.textAlign = 'center';
+                            c.style.fontSize = '19px';
+                            c.style.fontWeight = '700';
+                            c.style.color = '#1F2937';
+                            c.style.padding = '14px 18px';
+                        });
+                        
+                        // 이름 셀 스타일
+                        const nameCells = grid.querySelectorAll('.ag-cell[col-id="0"]');
+                        nameCells.forEach(c => {
+                            c.style.textAlign = 'left';
+                            c.style.paddingLeft = '18px';
+                        });
+                        
+                        // 합계 행 스타일 (첫 번째 행)
+                        const rows = grid.querySelectorAll('.ag-row');
+                        if (rows.length > 0) {
+                            const firstRow = rows[0];
+                            firstRow.style.background = '#FEF3C7';
+                            firstRow.style.fontWeight = '900';
+                            firstRow.style.fontSize = '20px';
+                            firstRow.style.color = '#1F2937';
+                            firstRow.style.borderTop = '3px solid #1F2937';
+                            firstRow.style.borderBottom = '2px solid #1F2937';
+                            firstRow.style.position = 'sticky';
+                            firstRow.style.top = '0';
+                            firstRow.style.zIndex = '10';
+                            
+                            const firstRowCells = firstRow.querySelectorAll('.ag-cell');
+                            firstRowCells.forEach(c => {
+                                c.style.background = '#FEF3C7';
+                                c.style.color = '#1F2937';
+                                c.style.fontWeight = '900';
+                                c.style.fontSize = '20px';
+                                c.style.padding = '16px 18px';
+                            });
+                        }
+                    }
+                }
+            });
+        });
+        
+        const gridElement = document.querySelector('.ag-root-wrapper');
+        if (gridElement) {
+            observer.observe(gridElement, {
+                childList: true,
+                subtree: true
+            });
+        }
+        
+        // 2초 후 한 번 더 실행 (초기 렌더링 대응)
+        setTimeout(applyStyles, 2000);
+    }
+    
+    // 페이지 로드 시 실행
+    if (document.readyState === 'complete') {
+        setTimeout(applyStyles, 500);
+    } else {
+        document.addEventListener('DOMContentLoaded', applyStyles);
+    }
+    
+    // Streamlit rerun 감지
+    window.addEventListener('load', applyStyles);
+    </script>
+    """, unsafe_allow_html=True)
+    
+    return grid_response
 
 def reset_app():
     keys_to_drop = [
@@ -548,36 +681,6 @@ if "df_errors" in st.session_state and isinstance(st.session_state["df_errors"],
         total_grad = summary.get("total_grad_count", 0)
         period_count = summary.get("period_count", 0)
 
-        # 요약 정보 렌더링
-        st.success(f"✅ 처리가 완료되었습니다. (소요 시간: {duration:.2f}초)")
-        
-        # 노르딕 브루탈리스트 KPI 위젯
-        st.markdown(f"""
-            <div style="display: flex; gap: 24px; margin-bottom: 32px; padding: 0 40px;">
-                <div class="nordic-card" style="flex: 1;">
-                    <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">분석 대상 건수</p>
-                    <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{period_count:,}</p>
-                </div>
-                <div class="nordic-card-accent" style="flex: 1;">
-                    <p style="font-size: 12px; font-weight: 900; color: #1F2937; margin-bottom: 8px;">미납 내역 건수</p>
-                    <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_miss} 건</p>
-                </div>
-                <div class="nordic-card" style="flex: 1;">
-                    <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">납부 부족</p>
-                    <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_under} 건</p>
-                </div>
-                <div class="nordic-card" style="flex: 1;">
-                    <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">초과 납부</p>
-                    <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_over} 건</p>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        if c_filt > 0:
-            st.info(f"💡 **참고:** {c_filt}건의 미납 내역이 '최초 납부월 이전'이라 제외되었습니다.")
-        elif total_errors == 0:
-            st.info("검출된 오류나 미납 내역이 없습니다.")
-
     # 상단 헤더 및 다운로드 버튼
     header_col, action_col = st.columns([1, 0.4]) # action_col 넓이 확보
     with header_col:
@@ -603,12 +706,74 @@ if "df_errors" in st.session_state and isinstance(st.session_state["df_errors"],
         with b_new:
             if st.button("새로 분석하기", use_container_width=True):
                 reset_app()
-
-    # 탭 구성 (오류 검출 결과가 기본)
-    tab1, tab2 = st.tabs(["오류 검출 결과", "최초 납부월"])
     
-    with tab1:
-        render_styled_table(st.session_state["df_errors"])
+    # 요약 정보 렌더링
+    st.success(f"✅ 처리가 완료되었습니다. (소요 시간: {duration:.2f}초)")
+    
+    # 노르딕 브루탈리스트 KPI 위젯
+    st.markdown(f"""
+        <div style="display: flex; gap: 24px; margin-bottom: 32px; padding: 0 40px;">
+            <div class="nordic-card" style="flex: 1;">
+                <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">분석 대상 건수</p>
+                <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{period_count:,}</p>
+            </div>
+            <div class="nordic-card-accent" style="flex: 1;">
+                <p style="font-size: 12px; font-weight: 900; color: #1F2937; margin-bottom: 8px;">미납 내역 건수</p>
+                <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_miss} 건</p>
+            </div>
+            <div class="nordic-card" style="flex: 1;">
+                <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">납부 부족</p>
+                <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_under} 건</p>
+            </div>
+            <div class="nordic-card" style="flex: 1;">
+                <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">초과 납부</p>
+                <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_over} 건</p>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    if c_filt > 0:
+        st.info(f"💡 **참고:** {c_filt}건의 미납 내역이 '최초 납부월 이전'이라 제외되었습니다.")
+    elif total_errors == 0:
+        st.info("검출된 오류나 미납 내역이 없습니다.")
+
+    # 이름별 오류 요약 테이블
+    df_errors = st.session_state["df_errors"]
+    if not df_errors.empty:
+        # 이름별로 상태별 건수 집계
+        summary_by_name = (
+            df_errors.groupby([Col.NAME, Col.STATUS])
+            .size()
+            .unstack(fill_value=0)
+            .astype(int)
+            .reset_index()
+        )
         
-    with tab2:
-        render_styled_table(st.session_state.get("df_first_payment", pd.DataFrame()))
+        # 상태 컬럼이 없으면 0으로 채움
+        for status in [Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]:
+            if status not in summary_by_name.columns:
+                summary_by_name[status] = 0
+        
+        # 컬럼 순서 정리
+        summary_by_name = summary_by_name[[Col.NAME, Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]]
+        
+        # 합계 컬럼 추가
+        summary_by_name["오류건수 합계"] = summary_by_name[Status.UNPAID] + summary_by_name[Status.INSUFFICIENT] + summary_by_name[Status.EXCESS]
+        
+        # 합계가 0인 사람 제외
+        summary_by_name = summary_by_name[summary_by_name["오류건수 합계"] > 0]
+        
+        # 정렬 적용 (기본: 오류건수 합계 내림차순)
+        summary_by_name = summary_by_name.sort_values("오류건수 합계", ascending=False).reset_index(drop=True)
+        
+        # 컬럼명 변경
+        summary_by_name = summary_by_name.rename(columns={
+            Col.NAME: "이름",
+            Status.UNPAID: "미납",
+            Status.INSUFFICIENT: "부족",
+            Status.EXCESS: "초과"
+        })
+        
+        # 테이블 표시
+        st.markdown("### 📋 이름별 오류 요약")
+        render_summary_table(summary_by_name)
