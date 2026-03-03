@@ -1,6 +1,9 @@
 # .history folder
 .history/
 
+# IDE/Editor settings
+.opencode/
+
 backup/
 
 # Excel files
