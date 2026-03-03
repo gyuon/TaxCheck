@@ -25,6 +25,12 @@ backup/
 !*.md
 !.streamlit/
 
+# Python virtual environment
+venv/
+.venv/
+env/
+.env/
+
 # Temporary and Cache files
 __pycache__/
 *.tmp
