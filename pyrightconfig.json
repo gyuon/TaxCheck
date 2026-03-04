@@ -1,0 +1,6 @@
+{
+  "venvPath": "/home/gyuon/projects/인별납부내역자동화/TaxCheck",
+  "venv": "venv",
+  "typeCheckingMode": "basic",
+  "extraPaths": ["/home/gyuon/projects/인별납부내역자동화/TaxCheck"]
+}
