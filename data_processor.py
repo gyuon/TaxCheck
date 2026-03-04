@@ -162,6 +162,7 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
 
         # 부족 검사
         insufficient_mask = ((config["deposit"] < std_min) & config["has_mask"]).fillna(False)
+        insufficient_mask = insufficient_mask & ((std_min - config["deposit"]) >= 1000)
         if insufficient_mask.any():
             res = work_df[insufficient_mask].copy()
             res[Col.FUND_NAME] = config["name"]
@@ -175,6 +176,7 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
 
         # 초과 검사
         excess_mask = ((config["deposit"] > std_max) & config["has_mask"]).fillna(False)
+        excess_mask = excess_mask & ((config["deposit"] - std_max) >= 1000)
         if excess_mask.any():
             res = work_df[excess_mask].copy()
             res[Col.FUND_NAME] = config["name"]
@@ -206,7 +208,7 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
     
     return final_df
 
-def generate_missed_months(df: pd.DataFrame, df_first: pd.DataFrame = None) -> tuple[pd.DataFrame, int]:
+def generate_missed_months(df: pd.DataFrame, df_first: pd.DataFrame | None = None) -> tuple[pd.DataFrame, int]:
     """
     미납월(누락된 코드)을 생성한다.
     - 코드 1: 11~17 중 하나라도 있으면 납부로 인정. 모두 없으면 미납.
@@ -320,14 +322,14 @@ def generate_missed_months(df: pd.DataFrame, df_first: pd.DataFrame = None) -> t
     
     return missed, filtered_count
 
-def to_excel_bytes(df_first, df_errors, output_filename):
+def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None):
     """
     데이터프레임을 엑셀 바이트로 변환 (리팩토링 버전)
     """
     buffer = BytesIO()
     
     def prepare_sheet(df, exclude_cols=None):
-        if df.empty:
+        if df is None or df.empty:
             return None
         # Unnamed 컬럼 제거
         cols = [c for c in df.columns if not str(c).startswith("Unnamed")]
@@ -526,8 +528,124 @@ def to_excel_bytes(df_first, df_errors, output_filename):
             # 헤더 행 고정 (2행부터 스크롤)
             ws.freeze_panes = "A2"
 
+            # 헤더 행 고정 (2행부터 스크롤)
+            ws.freeze_panes = "A2"
 
-        # 2. 최초납부월 시트
+        # 2. 오류요약 시트 (이름별 요약)
+        df_s = prepare_sheet(df_summary)
+        if df_s is not None:
+            df_s.to_excel(writer, index=True, index_label="번호", sheet_name=SheetName.ERROR_SUMMARY)
+            ws_s = writer.sheets[SheetName.ERROR_SUMMARY]
+            
+            # 컬럼 너비 설정
+            ws_s.column_dimensions["A"].width = 8   # 번호
+            ws_s.column_dimensions["B"].width = 12  # 이름
+            ws_s.column_dimensions["C"].width = 9   # 미납
+            ws_s.column_dimensions["D"].width = 9   # 부족
+            ws_s.column_dimensions["E"].width = 9   # 초과
+            ws_s.column_dimensions["F"].width = 12  # 오류건수 합계
+            
+            # 오토필터
+            last_col = get_column_letter(len(df_s.columns) + 1)
+            ws_s.auto_filter.ref = f"A1:{last_col}{len(df_s) + 1}"
+            
+            # 헤더 스타일 설정 (중앙 정렬)
+            for cell in ws_s[1]:
+                cell.alignment = Alignment(horizontal="center")
+            
+            # 데이터 행 정렬 (모든 컬럼 중앙 정렬)
+            for row in ws_s.iter_rows(min_row=2, max_row=len(df_s) + 1):
+                for cell in row:
+                    cell.alignment = Alignment(horizontal="center")
+                    if isinstance(cell.value, (int, float)):
+                        cell.number_format = "#,##0"
+            if isinstance(cell.value, (int, float)):
+                        cell.number_format = "#,##0"
+            
+            # 소계 행 추가
+            if not df_s.empty:
+                # 소계 행 생성 (번호: 빈, 이름: 빈, 미납/부족/초과/합계: 합계)
+                # 소계 행 생성 (번호: "소계", 이름: 개수, 미납/부족/초과/합계: 합계)
+                total_row_data = {
+                    "번호": "",
+                    "이름": len(df_s),  # 이름 데이터의 개수
+                    "미납": df_s["미납"].sum(),
+                    "부족": df_s["부족"].sum(),
+                    "초과": df_s["초과"].sum(),
+                    "합계": df_s["합계"].sum()
+                }
+                # 마지막 행 다음에 소계 행 추가
+                last_data_row = len(df_s) + 1  # +1은 헤더 고려
+                for col_idx, col_name in enumerate(df_s.columns, start=1):
+                    cell = ws_s.cell(row=last_data_row + 1, column=col_idx)
+                    if col_name in total_row_data:
+                        cell.value = total_row_data[col_name]
+                    else:
+                        cell.value = ""
+                
+                # 소계 행의 첫 번째 컬럼에 "소계" 텍스트 설정 (번호열 대신)
+                ws_s.cell(row=last_data_row + 1, column=1).value = "소계"
+                
+                # 소계 행 스타일 적용 (굵은 폰트, 중앙 정렬, 테두리)
+                thin_border = Border(
+                    left=Side(style='thin', color='FF9CA3AF'),
+                    right=Side(style='thin', color='FF9CA3AF'),
+                    top=Side(style='thin', color='FF9CA3AF'),
+                    bottom=Side(style='thin', color='FF9CA3AF')
+                )
+                for cell in ws_s[last_data_row + 1]:
+                    cell.alignment = Alignment(horizontal="center")
+                    cell.font = Font(bold=True)  # 모든 셀 굵게 표시
+                    if isinstance(cell.value, (int, float)):
+                        cell.number_format = "#,##0"
+                    cell.border = thin_border  # 테두리 적용
+                for cell in ws_s[last_data_row + 1]:
+                    cell.alignment = Alignment(horizontal="center")
+                    if isinstance(cell.value, (int, float)):
+                        cell.number_format = "#,##0"
+                        cell.font = Font(bold=True)
+                
+                # 소계 행을 헤더 바로 뒤(2행)로 이동
+                # 현재 마지막 행에 있는 소계를 삭제하고 2행에 삽입
+                if last_data_row + 1 > 2:
+                    # 마지막 행의 값 저장
+                    subtotal_row_values = [cell.value for cell in ws_s[last_data_row + 1]]
+                    # 마지막 행 삭제
+                    ws_s.delete_rows(last_data_row + 1, 1)
+                    # 2행에 소계 행 삽입
+                    ws_s.insert_rows(2, 1)
+                    # 2행에 값 복원
+                    for col_idx, value in enumerate(subtotal_row_values, start=1):
+                        ws_s.cell(row=2, column=col_idx).value = value
+                        # 스타일 복원 (굵은 폰트, 중앙 정렬, 테두리)
+                        thin_border = Border(
+                            left=Side(style='thin', color='FF9CA3AF'),
+                            right=Side(style='thin', color='FF9CA3AF'),
+                            top=Side(style='thin', color='FF9CA3AF'),
+                            bottom=Side(style='thin', color='FF9CA3AF')
+                        )
+                        cell = ws_s.cell(row=2, column=col_idx)
+                        cell.alignment = Alignment(horizontal="center")
+                        cell.font = Font(bold=True)  # 모든 셀 굵게 표시
+                        if isinstance(value, (int, float)):
+                            cell.number_format = "#,##0"
+                        cell.border = thin_border  # 테두리 적용
+                        cell = ws_s.cell(row=2, column=col_idx)
+                        cell.alignment = Alignment(horizontal="center")
+                        if isinstance(value, (int, float)):
+                            cell.number_format = "#,##0"
+                            cell.font = Font(bold=True)
+            
+            # 소계 행이 있으면 오토필터 범위 조정
+            if not df_s.empty:
+                last_col = get_column_letter(len(df_s.columns) + 1)
+                ws_s.auto_filter.ref = f"A1:{last_col}{len(df_s) + 2}"  # +2는 소계 행 포함
+            
+            # 틀고정 적용 (1행 헤더만 고정, 2행 소계부터 스크롤)
+            ws_s.freeze_panes = "A3"  # A3부터 스크롤하면 1,2행이 고정됨
+
+
+        # 3. 최초납부월 시트
         df_f = prepare_sheet(df_first, exclude_cols=["구분", "코드3"])
         if df_f is not None:
             df_f.to_excel(writer, index=True, index_label="번호", sheet_name=SheetName.FIRST_PAYMENT)
@@ -535,6 +653,12 @@ def to_excel_bytes(df_first, df_errors, output_filename):
             # 헤더 중앙 정렬 추가 (최초납부월 시트)
             for cell in ws_f[1]:
                 cell.alignment = Alignment(horizontal="center")
-                    
+                
+            # 오토필터 적용
+            last_col = get_column_letter(len(df_f.columns) + 1)
+            ws_f.auto_filter.ref = f"A1:{last_col}{len(df_f) + 1}"
+            
+            # 틀고정 적용 (1행 헤더만 고정)
+            ws_f.freeze_panes = "A2"
     buffer.seek(0)
     return buffer.getvalue(), output_filename

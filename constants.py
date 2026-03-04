@@ -37,6 +37,7 @@ class Status:
 class SheetName:
     """엑셀 시트 이름"""
     ERROR_RESULT = "오류검출결과"
+    ERROR_SUMMARY = "오류요약"
     FIRST_PAYMENT = "최초납부월"
 
 

@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from typing import cast
 import time
 import streamlit.components.v1 as components
-from st_aggrid import AgGrid
+import st_aggrid  # noqa: F401
 from data_processor import (
     get_google_sheets_title, 
     extract_first_payment_month, 
@@ -18,9 +19,9 @@ from constants import Col, Status
 pd.set_option('future.no_silent_downcasting', True)
 
 @st.cache_data(show_spinner=False)
-def build_excel_bytes(df_first, df_errors, output_filename):
+def build_excel_bytes(df_first, df_errors, output_filename, df_summary=None):
     # 재실행 시 재계산을 방지하기 위해 생성된 엑셀 바이트를 캐싱함
-    return to_excel_bytes(df_first, df_errors, output_filename)
+    return to_excel_bytes(df_first, df_errors, output_filename, df_summary)
 
 
 st.set_page_config(page_title="인별납부내역 오류검출", layout="wide")
@@ -231,143 +232,12 @@ def render_styled_table(df):
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
 
-def render_summary_table(df):
-    """
-    이름별 오류 요약 테이블 렌더링 (AgGrid 사용)
-    """
-    if df.empty:
-        st.write("데이터가 없습니다.")
-        return
-    
-    # 합계 계산
-    summary_row = {
-        "이름": f"총 {len(df)}명",
-        "미납": df["미납"].sum(),
-        "부족": df["부족"].sum(),
-        "초과": df["초과"].sum(),
-        "오류건수 합계": df["오류건수 합계"].sum()
-    }
-    
-    # 합계 행 추가
-    grid_data = df.to_dict("records")
-    grid_data.insert(0, summary_row)
-    
-    # 동적 key 생성 (rerun 시마다 새로운 인스턴스)
-    import time
-    dynamic_key = f"ag_grid_summary_{int(time.time())}"
-    
-    # AgGrid 표시
-    grid_response = AgGrid(
-        pd.DataFrame(grid_data),
-        height=400,
-        theme="streamlit",
-        key=dynamic_key,
-        allow_unsafe_jscode=True,
-        defaultColDef={
-            "resizable": True,
-            "sortable": True,
-            "filter": True,
-            "editable": False
-        }
-    )
-    
-    # JavaScript로 스타일 주입
-    st.markdown("""
-    <script>
-    // AgGrid가 렌더링된 후 스타일 적용
-    function applyStyles() {
-        const observer = new MutationObserver(function(mutations) {
-            mutations.forEach(function(mutation) {
-                if (mutation.addedNodes.length > 0) {
-                    const grid = document.querySelector('.ag-root-wrapper');
-                    if (grid) {
-                        // 헤더 스타일
-                        const headers = grid.querySelectorAll('.ag-header-cell');
-                        headers.forEach(h => {
-                            h.style.backgroundColor = '#1F2937';
-                            h.style.color = '#FFFFFF';
-                            h.style.fontWeight = '900';
-                            h.style.fontSize = '19px';
-                            h.style.textAlign = 'center';
-                            h.style.borderBottom = '2px solid #000000';
-                        });
-                        
-                        // 데이터 셀 스타일
-                        const cells = grid.querySelectorAll('.ag-cell');
-                        cells.forEach(c => {
-                            c.style.textAlign = 'center';
-                            c.style.fontSize = '19px';
-                            c.style.fontWeight = '700';
-                            c.style.color = '#1F2937';
-                            c.style.padding = '14px 18px';
-                        });
-                        
-                        // 이름 셀 스타일
-                        const nameCells = grid.querySelectorAll('.ag-cell[col-id="0"]');
-                        nameCells.forEach(c => {
-                            c.style.textAlign = 'left';
-                            c.style.paddingLeft = '18px';
-                        });
-                        
-                        // 합계 행 스타일 (첫 번째 행)
-                        const rows = grid.querySelectorAll('.ag-row');
-                        if (rows.length > 0) {
-                            const firstRow = rows[0];
-                            firstRow.style.background = '#FEF3C7';
-                            firstRow.style.fontWeight = '900';
-                            firstRow.style.fontSize = '20px';
-                            firstRow.style.color = '#1F2937';
-                            firstRow.style.borderTop = '3px solid #1F2937';
-                            firstRow.style.borderBottom = '2px solid #1F2937';
-                            firstRow.style.position = 'sticky';
-                            firstRow.style.top = '0';
-                            firstRow.style.zIndex = '10';
-                            
-                            const firstRowCells = firstRow.querySelectorAll('.ag-cell');
-                            firstRowCells.forEach(c => {
-                                c.style.background = '#FEF3C7';
-                                c.style.color = '#1F2937';
-                                c.style.fontWeight = '900';
-                                c.style.fontSize = '20px';
-                                c.style.padding = '16px 18px';
-                            });
-                        }
-                    }
-                }
-            });
-        });
-        
-        const gridElement = document.querySelector('.ag-root-wrapper');
-        if (gridElement) {
-            observer.observe(gridElement, {
-                childList: true,
-                subtree: true
-            });
-        }
-        
-        // 2초 후 한 번 더 실행 (초기 렌더링 대응)
-        setTimeout(applyStyles, 2000);
-    }
-    
-    // 페이지 로드 시 실행
-    if (document.readyState === 'complete') {
-        setTimeout(applyStyles, 500);
-    } else {
-        document.addEventListener('DOMContentLoaded', applyStyles);
-    }
-    
-    // Streamlit rerun 감지
-    window.addEventListener('load', applyStyles);
-    </script>
-    """, unsafe_allow_html=True)
-    
-    return grid_response
 
 def reset_app():
     keys_to_drop = [
-        "df_errors", "df_first_payment", "result_summary", 
+        "df_errors", "df_first_payment", "result_summary",
         "error_msg", "error_detail", "run_params", "processing",
-        "uploaded_file", "cached_sheet_title", "download_name"
+        "uploaded_file", "cached_sheet_title", "download_name", "button_clicked"
     ]
     for k in keys_to_drop:
         if k in st.session_state:
@@ -468,25 +338,34 @@ if "df_errors" not in st.session_state and not st.session_state.get("processing"
         u_filter = True # 고정
         
     st.markdown("</div>", unsafe_allow_html=True)
-
+    
     # 중앙 정렬 분석 실행 버튼
-    # st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True) # 스페이서 제거
     btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
     with btn_col2:
-        if st.button("분석 실행", type="primary", use_container_width=True, disabled=st.session_state["processing"]):
-            # 실행 시점의 파라미터 캡처
-            st.session_state["run_params"] = {
-                "main_file": st.session_state.get("uploaded_file"),
-                "gsheet_url": gsheet_url,
-                "sheet_name": s_name,
-                "header_row": h_row,
-                "start_year": s_year,
-                "end_year": e_year,
-                "use_filter": u_filter
-            }
-            st.session_state["processing"] = True
-            st.rerun()
-
+        if not st.session_state.get("button_clicked", False):
+            if st.button("분석 실행", type="primary", use_container_width=True, key="analyze_button", disabled=st.session_state["processing"]):
+                # 실행 시점의 파라미터 캡처
+                st.session_state["run_params"] = {
+                    "main_file": st.session_state.get("uploaded_file"),
+                    "gsheet_url": gsheet_url,
+                    "sheet_name": s_name,
+                    "header_row": h_row,
+                    "start_year": s_year,
+                    "end_year": e_year,
+                    "use_filter": u_filter
+                }
+                st.session_state["button_clicked"] = True
+                st.session_state["processing"] = True
+                
+                # JavaScript로 버튼 즉시 숨기기
+                components.html("""
+                    <script>
+                        const btn = document.querySelector('button[kc="analyze_button"]');
+                        if (btn) btn.style.display = 'none';
+                    </script>
+                """, height=0)
+                
+                st.rerun()
 def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, end_year, use_first_payment_filter):
     # 기존 결과 및 오류 메시지 초기화
     if "df_errors" in st.session_state: del st.session_state["df_errors"]
@@ -540,7 +419,7 @@ def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, en
                 st.session_state["error_msg"] = "Google Sheet에 '이름'과 '구분' 열이 필요합니다."
                 return
             
-            graduation_names = set(df_sheet[df_sheet["구분"].str.strip() == "졸업생"]["이름"].tolist())
+            graduation_names = list(set(df_sheet[df_sheet["구분"].str.strip() == "졸업생"]["이름"].tolist()))
             df = df[df["이름"].isin(graduation_names)].copy()
             
             total_grad_count = len(df) # 졸업생 전체 납부 건수 (년도 필터링 전)
@@ -553,21 +432,21 @@ def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, en
             return
 
         # 4. 최초납부월 추출 (전체 데이터 대상)
-        df_first_payment = extract_first_payment_month(df)
+        df_first_payment = extract_first_payment_month(cast(pd.DataFrame, df))
 
         # 5. 년도 필터 적용
         if Col.YEAR in df.columns:
             mask = (df[Col.YEAR] >= start_year) & (df[Col.YEAR] <= end_year)
             mask = mask.fillna(False) 
-            df_view = df[mask].copy()
+            df_view: pd.DataFrame = cast(pd.DataFrame, df[mask].copy())
             
-            period_count = len(df_view) # 필터링된 기간 내 건수
+            period_count = len(df_view) 
 
             if df_view.empty:
                 st.session_state["error_msg"] = f"선택한 년도 범위({start_year} ~ {end_year})에 해당하는 데이터가 없습니다."
                 return
         else:
-            df_view = df.copy()
+            df_view = cast(pd.DataFrame, df.copy())
             period_count = len(df_view)
 
         # 6. 오류 검출
@@ -581,15 +460,12 @@ def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, en
             if df_errors.empty:
                 df_errors = df_missed
             else:
-                # [Fix] FutureWarning: Ensure dtypes are aligned before concat
-                # Use pd.to_numeric to safely handle pd.NA (converts to np.nan)
                 for col in [Col.DEPOSIT, Col.STANDARD, Col.DIFF]:
                     if col in df_errors.columns:
-                        df_errors[col] = pd.to_numeric(df_errors[col], errors="coerce").astype(float)
+                        df_errors[col] = cast(pd.Series, pd.to_numeric(df_errors[col], errors="coerce")).astype(float)
                     if col in df_missed.columns:
-                        df_missed[col] = pd.to_numeric(df_missed[col], errors="coerce").astype(float)
+                        df_missed[col] = cast(pd.Series, pd.to_numeric(df_missed[col], errors="coerce")).astype(float)
                 
-                # Align string columns
                 for col in [Col.CODE]:
                     if col in df_errors.columns:
                         df_errors[col] = df_errors[col].astype(str)
@@ -607,7 +483,43 @@ def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, en
         # 이렇게 하면 다운로드 버튼이 렌더링될 때 지연 시간 없이 즉시 다운로드 가능함.
         base_name = getattr(main_file, "name", "result.xlsx")
         download_name = base_name.replace(".xlsx", "_오류검출.xlsx")
-        _ = to_excel_bytes(df_errors, df_first_payment, download_name)
+        
+        # 이름별 오류 요약 생성 (엑셀용) - 캐시 전에 먼저 생성
+        df_summary = pd.DataFrame()
+        if not df_errors.empty:
+            summary_by_name = cast(
+                pd.DataFrame,
+                df_errors.groupby([Col.NAME, Col.STATUS])
+                .size()
+                .unstack(fill_value=0)
+                .astype(int)
+                .reset_index()
+            )
+            
+            for status in [Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]:
+                if status not in summary_by_name.columns:
+                    summary_by_name[status] = 0
+            
+            summary_by_name = cast(pd.DataFrame, summary_by_name[[Col.NAME, Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]])
+            
+            summary_by_name["합계"] = summary_by_name[Status.UNPAID] + summary_by_name[Status.INSUFFICIENT] + summary_by_name[Status.EXCESS]
+            
+            summary_by_name = cast(pd.DataFrame, summary_by_name[summary_by_name["합계"] > 0])
+            
+            summary_by_name = cast(pd.DataFrame, summary_by_name.sort_values("합계", ascending=False)).reset_index(drop=True)
+            summary_by_name.index = summary_by_name.index + 1
+            
+            # 컬럼명 변경
+            df_summary = summary_by_name.rename(columns={
+                Col.NAME: "이름",
+                Status.UNPAID: "미납",
+                Status.INSUFFICIENT: "부족",
+                Status.EXCESS: "초과"
+            })
+        
+        _ = to_excel_bytes(df_errors, df_first_payment, download_name, df_summary)
+
+        st.session_state["df_summary"] = df_summary
 
         # 결과 저장
         st.session_state["df_errors"] = df_errors
@@ -656,16 +568,31 @@ if st.session_state.get("processing"):
     st.session_state["settings_expanded"] = False
     st.rerun()
 
-# 저장된 결과 또는 오류 렌더링
+# 에러 메시지 표시
 if "error_msg" in st.session_state:
     st.error(st.session_state["error_msg"])
     if "error_detail" in st.session_state:
         with st.expander("🛠️ 기술적 상세 정보 (개발자용)"):
             st.code(st.session_state["error_detail"])
 
-if "df_errors" in st.session_state and isinstance(st.session_state["df_errors"], pd.DataFrame):
-    st.divider()
-    
+# 성공 결과 렌더링 (에러 블록과 분리)
+if "df_errors" in st.session_state:
+    # 결과 영역 스타일
+    st.markdown("""
+        <style>
+            /* 분석 결과 영역 상단 여백 감소 */
+            [data-testid="stVerticalBlock"] > [style*="flex-direction: column"] > [data-testid="stVerticalBlock"]:has(h2) {
+                padding-top: 0px !important;
+                margin-top: 0px !important;
+            }
+            
+            /* 결과 헤더 부분 여백 감소 */
+            div[data-testid="stMarkdownContainer"] h2 {
+                margin-top: 0px !important;
+                padding-top: 8px !important;
+            }
+        </style>
+    """, unsafe_allow_html=True)
     # 0. 결과 요약 메시지 표시 (세션 스테이트에서 불러옴)
     summary = st.session_state.get("result_summary", {})
     if summary:
@@ -691,6 +618,7 @@ if "df_errors" in st.session_state and isinstance(st.session_state["df_errors"],
             st.session_state.get("df_first_payment", pd.DataFrame()),
             st.session_state["df_errors"],
             dl_name,
+            st.session_state.get("df_summary", pd.DataFrame()),
         )
         
         # 버튼 그룹 (다운로드 + 새로 분석하기)
@@ -714,20 +642,24 @@ if "df_errors" in st.session_state and isinstance(st.session_state["df_errors"],
     st.markdown(f"""
         <div style="display: flex; gap: 24px; margin-bottom: 32px; padding: 0 40px;">
             <div class="nordic-card" style="flex: 1;">
-                <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">분석 대상 건수</p>
+                <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">분석 대상</p>
                 <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{period_count:,}</p>
             </div>
             <div class="nordic-card-accent" style="flex: 1;">
-                <p style="font-size: 12px; font-weight: 900; color: #1F2937; margin-bottom: 8px;">미납 내역 건수</p>
+                <p style="font-size: 12px; font-weight: 900; color: #1F2937; margin-bottom: 8px;">미납</p>
                 <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_miss} 건</p>
             </div>
             <div class="nordic-card" style="flex: 1;">
-                <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">납부 부족</p>
+                <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">부족</p>
                 <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_under} 건</p>
             </div>
             <div class="nordic-card" style="flex: 1;">
-                <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">초과 납부</p>
+                <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">초과</p>
                 <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_over} 건</p>
+            </div>
+            <div class="nordic-card-accent" style="flex: 1;">
+                <p style="font-size: 12px; font-weight: 900; color: #1F2937; margin-bottom: 8px;">오류 합계</p>
+                <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{total_errors} 건</p>
             </div>
         </div>
     """, unsafe_allow_html=True)
@@ -737,43 +669,4 @@ if "df_errors" in st.session_state and isinstance(st.session_state["df_errors"],
     elif total_errors == 0:
         st.info("검출된 오류나 미납 내역이 없습니다.")
 
-    # 이름별 오류 요약 테이블
-    df_errors = st.session_state["df_errors"]
-    if not df_errors.empty:
-        # 이름별로 상태별 건수 집계
-        summary_by_name = (
-            df_errors.groupby([Col.NAME, Col.STATUS])
-            .size()
-            .unstack(fill_value=0)
-            .astype(int)
-            .reset_index()
-        )
-        
-        # 상태 컬럼이 없으면 0으로 채움
-        for status in [Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]:
-            if status not in summary_by_name.columns:
-                summary_by_name[status] = 0
-        
-        # 컬럼 순서 정리
-        summary_by_name = summary_by_name[[Col.NAME, Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]]
-        
-        # 합계 컬럼 추가
-        summary_by_name["오류건수 합계"] = summary_by_name[Status.UNPAID] + summary_by_name[Status.INSUFFICIENT] + summary_by_name[Status.EXCESS]
-        
-        # 합계가 0인 사람 제외
-        summary_by_name = summary_by_name[summary_by_name["오류건수 합계"] > 0]
-        
-        # 정렬 적용 (기본: 오류건수 합계 내림차순)
-        summary_by_name = summary_by_name.sort_values("오류건수 합계", ascending=False).reset_index(drop=True)
-        
-        # 컬럼명 변경
-        summary_by_name = summary_by_name.rename(columns={
-            Col.NAME: "이름",
-            Status.UNPAID: "미납",
-            Status.INSUFFICIENT: "부족",
-            Status.EXCESS: "초과"
-        })
-        
-        # 테이블 표시
-        st.markdown("### 📋 이름별 오류 요약")
-        render_summary_table(summary_by_name)
+
