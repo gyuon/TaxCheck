@@ -148,41 +148,36 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
             ratios = pd.Series(np.where(ratio_mask, 0.3, 0.4), index=work_df.index)
             
             target_amounts = op_deposit * ratios
-            # 기준값: 부족(내림), 초과(올림)
-            std_min = (target_amounts // 1000 * 1000).astype(int)
-            std_max = (np.ceil(target_amounts / 1000) * 1000).astype(int)
+            std = target_amounts.round().astype(int)
         else:
-            # 복지기금: 운영기금과 1:1 동일해야 함
-            ratios = pd.Series(1.0, index=work_df.index) # 100%
-            std_min = op_deposit
-            std_max = op_deposit
+            ratios = pd.Series(1.0, index=work_df.index)
+            std = op_deposit
 
-        # [최적화] 공통 수식 생성 (× 기호 및 % 형식 적용)
         formula_series = "운영기금 총액 × " + (ratios * 100).astype(int).astype(str) + "%"
 
         # 부족 검사
-        insufficient_mask = ((config["deposit"] < std_min) & config["has_mask"]).fillna(False)
-        insufficient_mask = insufficient_mask & ((std_min - config["deposit"]) >= 1000)
+        insufficient_mask = ((config["deposit"] < std) & config["has_mask"]).fillna(False)
+        insufficient_mask = insufficient_mask & ((std - config["deposit"]) >= 1000)
         if insufficient_mask.any():
             res = work_df[insufficient_mask].copy()
             res[Col.FUND_NAME] = config["name"]
             res[Col.CODE] = config["code"]
             res[Col.STATUS] = Status.INSUFFICIENT
-            res[Col.STANDARD] = std_min[insufficient_mask]
+            res[Col.STANDARD] = std[insufficient_mask]
             res[Col.FORMULA] = formula_series[insufficient_mask]
             res[Col.DEPOSIT] = config["deposit"][insufficient_mask]
             res[Col.DIFF] = res[Col.DEPOSIT] - res[Col.STANDARD]
             results.append(res)
 
         # 초과 검사
-        excess_mask = ((config["deposit"] > std_max) & config["has_mask"]).fillna(False)
-        excess_mask = excess_mask & ((config["deposit"] - std_max) >= 1000)
+        excess_mask = ((config["deposit"] > std) & config["has_mask"]).fillna(False)
+        excess_mask = excess_mask & ((config["deposit"] - std) >= 1000)
         if excess_mask.any():
             res = work_df[excess_mask].copy()
             res[Col.FUND_NAME] = config["name"]
             res[Col.CODE] = config["code"]
             res[Col.STATUS] = Status.EXCESS
-            res[Col.STANDARD] = std_max[excess_mask]
+            res[Col.STANDARD] = std[excess_mask]
             res[Col.FORMULA] = formula_series[excess_mask]
             res[Col.DEPOSIT] = config["deposit"][excess_mask]
             res[Col.DIFF] = res[Col.DEPOSIT] - res[Col.STANDARD]
