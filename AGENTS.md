@@ -40,19 +40,11 @@ python -m unittest test_suite.py
 
 ## Architecture
 
-```
-인별납부내역자동화/
-├── TaxCheck/
-│   ├── app.py              # Streamlit 메인 앱 (UI, 세션 상태 관리)
-│   ├── data_processor.py   # 데이터 처리 로직 (오류 검출, 미납 생성)
-│   ├── constants.py        # 컬럼명, 상태값 상수 정의
-│   ├── test_suite.py       # 단위 테스트
-│   ├── compare_excel.py    # 엑셀 비교 유틸리티 (개발용)
-│   ├── requirements.txt    # 의존성 목록
-│   └── .streamlit/
-│       └── config.toml     # Streamlit 테마 설정
-└── venv/                   # Python 가상환경
-```
+**계층 구조**: UI 계층(app.py)과 비즈니스 로직 계층(data_processor.py)이 분리된 단일 모듈 구조. 상수는 constants.py에서 중앙 관리.
+
+**상태 관리**: Streamlit 세션 상태(st.session_state)로 파일 업로드, 처리 결과, UI 상태를 관리.
+
+**데이터 처리 패턴**: 모든 데이터는 Pandas DataFrame으로 메모리에서 처리되며, DB는 사용하지 않음.
 
 ### 핵심 데이터 흐름
 
@@ -75,11 +67,11 @@ python -m unittest test_suite.py
 
 ## Key Files
 
-| 파일 | 역할 | 주요 함수/클래스 |
-|------|------|-----------------|
-| `app.py` | Streamlit UI | `run_processing()`, `reset_app()` |
-| `data_processor.py` | 비즈니스 로직 | `detect_errors()`, `generate_missed_months()`, `extract_first_payment_month()` |
-| `constants.py` | 상수 정의 | `Col`, `Status`, `FundName`, `FundCode` |
+| 파일 | 역할 |
+|------|------|
+| `app.py` | Streamlit UI, 세션 상태 관리 |
+| `data_processor.py` | 오류 검출, 미납 생성 등 비즈니스 로직 |
+| `constants.py` | 컬럼명, 상태값, 기금 코드 상수 |
 
 ## Conventions
 

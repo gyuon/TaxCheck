@@ -53,20 +53,6 @@ streamlit run app.py
 
 현재 환경 변수 설정 불필요
 
-## 프로젝트 구조
-
-```
-TaxCheck/
-├── app.py              # Streamlit 메인 앱
-├── data_processor.py   # 데이터 처리 로직
-├── constants.py        # 상수 정의
-├── test_suite.py       # 단위 테스트
-├── compare_excel.py    # 엑셀 비교 유틸리티
-├── requirements.txt    # 의존성
-└── .streamlit/
-    └── config.toml     # 테마 설정
-```
-
 ## 사용법
 
 1. **원본 엑셀 업로드**: 납부 내역이 포함된 엑셀 파일 (.xlsx)
