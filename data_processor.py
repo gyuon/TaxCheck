@@ -39,6 +39,22 @@ def get_google_sheets_title(url: str) -> str | None:
     except Exception:
         return None
 
+def extract_date_from_filename(filename: str) -> tuple[int, int] | None:
+    """
+    파일명에서 년월을 추출한다.
+    패턴: ※정리본_YY.M.D.xlsx (예: ※정리본_26.2.14.xlsx → (2026, 2))
+    """
+    match = re.search(r"_(\d{2})\.(\d{1,2})\.\d{1,2}\.xlsx?$", filename)
+    if not match:
+        return None
+
+    yy = int(match.group(1))
+    month = int(match.group(2))
+
+    year = 2000 + yy if yy <= 30 else 1900 + yy
+
+    return (year, month)
+
 def extract_first_payment_month(df: pd.DataFrame) -> pd.DataFrame:
     """
     최초 납부월 명단을 추출한다.
@@ -203,13 +219,14 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
     
     return final_df
 
-def generate_missed_months(df: pd.DataFrame, df_first: pd.DataFrame | None = None) -> tuple[pd.DataFrame, int]:
+def generate_missed_months(df: pd.DataFrame, df_first: pd.DataFrame | None = None, filename: str | None = None) -> tuple[pd.DataFrame, int]:
     """
     미납월(누락된 코드)을 생성한다.
     - 코드 1: 11~17 중 하나라도 있으면 납부로 인정. 모두 없으면 미납.
     - 코드 2: 21이 없으면 미납.
     - 코드 3: 31이 없으면 미납.
     - 단, df_first(최초납부월 정보)가 주어지면, 해당 인원의 최초납부월 이전 데이터는 미납에서 제외한다.
+    - filename이 주어지면, 기준년월-3개월 이전의 미납에 "과거 미납분"을 비고에 표기한다.
     """
     # 1. 대상 데이터 필터링 및 "대표 코드(CanonicalCode)" 부여
     # (코드1==1 & 코드2 1~7) -> 1
@@ -310,9 +327,20 @@ def generate_missed_months(df: pd.DataFrame, df_first: pd.DataFrame | None = Non
     missed[Col.STANDARD] = pd.NA
     missed[Col.FORMULA] = ""
     missed[Col.DIFF] = pd.NA
-    missed[Col.REMARKS] = ""
     
-    # 필요 없어진 컬럼 제거
+    ref_date = extract_date_from_filename(filename) if filename else None
+    if ref_date:
+        cutoff_serial = ref_date[0] * 12 + ref_date[1] - 3
+        if "serial" not in missed.columns:
+            missed["serial"] = missed[Col.YEAR] * 12 + missed[Col.MONTH]
+        missed[Col.REMARKS] = missed.apply(
+            lambda row: "과거 미납분" if row["serial"] < cutoff_serial else "",
+            axis=1
+        )
+        missed = missed.drop(columns=["serial"])
+    else:
+        missed[Col.REMARKS] = ""
+    
     missed = missed[RESULT_COLUMNS].sort_values([Col.NAME, Col.YEAR, Col.MONTH, Col.CODE])
     
     return missed, filtered_count

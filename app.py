@@ -454,7 +454,7 @@ def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, en
 
         # 7. 미납월 생성 및 병합
         filter_arg = df_first_payment if use_first_payment_filter else None
-        df_missed, filtered_count = generate_missed_months(df_view, filter_arg)
+        df_missed, filtered_count = generate_missed_months(df_view, filter_arg, filename=main_file.name)
 
         if not df_missed.empty:
             if df_errors.empty:
