@@ -334,7 +334,7 @@ def generate_missed_months(df: pd.DataFrame, df_first: pd.DataFrame | None = Non
         if "serial" not in missed.columns:
             missed["serial"] = missed[Col.YEAR] * 12 + missed[Col.MONTH]
         missed[Col.REMARKS] = missed.apply(
-            lambda row: "과거 미납분" if row["serial"] < cutoff_serial else "",
+            lambda row: "3개월 이전 미납분" if row["serial"] < cutoff_serial else "",
             axis=1
         )
         missed = missed.drop(columns=["serial"])
