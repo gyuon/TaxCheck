@@ -360,7 +360,7 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None):
             cols = [c for c in cols if c not in exclude_cols]
         return df[cols]
 
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:  # type: ignore[arg-type]
         # 1. 오류검출결과 시트 (사용자 요청으로 앞에 위치)
         df_e = prepare_sheet(df_errors)
         if df_e is not None:
