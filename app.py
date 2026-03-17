@@ -25,24 +25,10 @@ def build_excel_bytes(df_first, df_errors, output_filename, df_summary=None):
 
 
 st.set_page_config(page_title="인별납부내역 오류검출", layout="wide")
-# --- 노르딕 브루탈리스트 헤더 및 타이틀 ---
-st.markdown(f"""
-    <div style="display: flex; align-items: center; padding: 0px 40px; height: 80px; border-bottom: 1.5px solid #1F2937; margin-bottom: 24px;">
-        <span style="font-size: 22px; font-weight: 900; letter-spacing: 1.5px; color: #1F2937;">TAXCHECK</span>
-        <div style="margin-left: 64px; display: flex; gap: 40px;">
-            <span style="font-size: 14px; font-weight: bold; color: #1F2937;">홈</span>
-            <span style="font-size: 14px; font-weight: medium; color: #9CA3AF;">상세 분석</span>
-            <span style="font-size: 14px; font-weight: medium; color: #9CA3AF;">기록 보관</span>
-        </div>
-        <div style="margin-left: auto; display: flex; align-items: center; gap: 20px;">
-            <span style="font-size: 12px; font-weight: 900; color: #1F2937;">시스템 가동 중</span>
-            <div style="width: 40px; height: 20px; border: 1.5px solid #1F2937; position: relative;">
-                <div style="width: 12px; height: 12px; background-color: #1F2937; position: absolute; left: 4px; top: 3px;"></div>
-            </div>
-        </div>
-    </div>
-    <div style="padding: 0px 40px; margin-bottom: 24px;">
-        <h1 style="font-size: 42px; font-weight: 700; letter-spacing: -1.5px; color: #1F2937; margin: 0;">데이터 분석 대시보드</h1>
+
+st.markdown("""
+    <div style="text-align: center; padding: 0 0 20px 0;">
+        <h1 style="font-size: 36px; font-weight: 700; letter-spacing: -1px; color: #1F2937; margin: 0;">인별납부내역 자동화</h1>
     </div>
 """, unsafe_allow_html=True)
 
@@ -263,8 +249,8 @@ if st.session_state.get("df_errors") is not None or st.session_state.get("proces
 
 # 상단 설정 영역 (물리적 컬럼 카드 레이아웃)
 if "df_errors" not in st.session_state and not st.session_state.get("processing", False):
-    st.markdown("<div style='padding: 0 20px;'>", unsafe_allow_html=True) # 컬럼 패딩 보간
-    c_file, c_url, c_filter, c_config = st.columns(4, gap="large")
+    st.markdown("<div style='padding: 0 20px;'>", unsafe_allow_html=True)
+    c_file, c_url, c_filter = st.columns(3, gap="large")
 
     # 1. 원본 엑셀 업로드
     with c_file:
@@ -282,8 +268,8 @@ if "df_errors" not in st.session_state and not st.session_state.get("processing"
                 st.rerun()
         else:
             main_file = st.session_state["uploaded_file"]
-            st.success(f"준비됨: {main_file.name}") # st.info -> st.success (긍정적 메시지)
-            if st.button("파일 다시 선택", key="reset_file", use_container_width=True): # 버튼 텍스트 변경
+            st.success(f"준비됨: {main_file.name}")
+            if st.button("파일 다시 선택", key="reset_file", use_container_width=True):
                 st.session_state["uploaded_file"] = None
                 st.rerun()
 
@@ -329,14 +315,6 @@ if "df_errors" not in st.session_state and not st.session_state.get("processing"
         s_year = st.number_input("시작", value=2013, step=1)
         e_year = st.number_input("종료", value=cur_year, step=1)
 
-    # 4. 고급 설정
-    with c_config:
-        st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
-        st.markdown("##### 고급 설정")
-        s_name = st.text_input("시트명", value="raw")
-        h_row = st.number_input("헤더행", min_value=0, value=1, step=1)
-        u_filter = True # 고정
-        
     st.markdown("</div>", unsafe_allow_html=True)
     
     # 중앙 정렬 분석 실행 버튼
@@ -344,15 +322,14 @@ if "df_errors" not in st.session_state and not st.session_state.get("processing"
     with btn_col2:
         if not st.session_state.get("button_clicked", False):
             if st.button("분석 실행", type="primary", use_container_width=True, key="analyze_button", disabled=st.session_state["processing"]):
-                # 실행 시점의 파라미터 캡처
                 st.session_state["run_params"] = {
                     "main_file": st.session_state.get("uploaded_file"),
                     "gsheet_url": gsheet_url,
-                    "sheet_name": s_name,
-                    "header_row": h_row,
+                    "sheet_name": "raw",
+                    "header_row": 1,
                     "start_year": s_year,
                     "end_year": e_year,
-                    "use_filter": u_filter
+                    "use_filter": True
                 }
                 st.session_state["button_clicked"] = True
                 st.session_state["processing"] = True
