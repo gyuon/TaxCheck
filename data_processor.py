@@ -219,7 +219,14 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
     
     return final_df
 
-def generate_missed_months(df: pd.DataFrame, df_first: pd.DataFrame | None = None, filename: str | None = None) -> tuple[pd.DataFrame, int]:
+def generate_missed_months(
+    df: pd.DataFrame, 
+    df_first: pd.DataFrame | None = None, 
+    filename: str | None = None,
+    graduation_names: list[str] | None = None,
+    end_year: int | None = None,
+    end_month: int | None = None
+) -> tuple[pd.DataFrame, int]:
     """
     미납월(누락된 코드)을 생성한다.
     - 코드 1: 11~17 중 하나라도 있으면 납부로 인정. 모두 없으면 미납.
@@ -227,6 +234,8 @@ def generate_missed_months(df: pd.DataFrame, df_first: pd.DataFrame | None = Non
     - 코드 3: 31이 없으면 미납.
     - 단, df_first(최초납부월 정보)가 주어지면, 해당 인원의 최초납부월 이전 데이터는 미납에서 제외한다.
     - filename이 주어지면, 기준년월-3개월 이전의 미납에 "과거 미납분"을 비고에 표기한다.
+    - graduation_names, end_year, end_month가 주어지면, 졸업생별로 최초납부월~기준년월까지의
+      모든 월에 대해 미납을 검출한다 (원본 데이터에 없는 월도 포함).
     """
     # 1. 대상 데이터 필터링 및 "대표 코드(CanonicalCode)" 부여
     # (코드1==1 & 코드2 1~7) -> 1
@@ -248,13 +257,44 @@ def generate_missed_months(df: pd.DataFrame, df_first: pd.DataFrame | None = Non
     target_df.loc[mask_welf, "canonical"] = 3
     
     # 유효한 canonical 코드를 가진 행만 남김 (이름/년/월 그룹 파악용)
-    # 하지만 "미납"을 판단하려면, 해당 월에 '다른 납부내역'은 있는데 특정 코드가 빠진 것을 찾아야 함.
-    # 즉, 그룹핑 기준은 "유효한 납부내역이 하나라도 있는 (이름, 해당년, 해당월)"
     valid_rows = target_df[target_df["canonical"] > 0].copy()
     
-    # [수정] 그룹핑 기준 변경: 유효 코드가 없더라도, 어쨌든 데이터에 존재하는 월이면 미납 검사 대상이 되어야 함.
-    # 따라서 groups는 target_df 전체에서 추출
-    groups = target_df[[Col.NAME, Col.YEAR, Col.MONTH]].drop_duplicates()
+    # [신규] graduation_names, end_year, end_month가 제공되면 전체 기간 생성
+    if graduation_names and end_year and end_month and df_first is not None:
+        # 졸업생별 최초납부월 매핑
+        first_map = df_first.set_index(Col.NAME)[[Col.YEAR, Col.MONTH]]
+        first_map["serial"] = first_map[Col.YEAR] * 12 + first_map[Col.MONTH]
+        first_serial_dict = first_map["serial"].to_dict()
+        
+        end_serial = end_year * 12 + end_month
+        
+        # 각 졸업생별로 (최초납부월 ~ 기준년월) 기간 생성
+        all_periods = []
+        for name in graduation_names:
+            if name in first_serial_dict:
+                start_serial = first_serial_dict[name]
+            else:
+                # 최초납부월 정보가 없으면 원본 데이터의 최소 월 사용
+                name_data = target_df[target_df[Col.NAME] == name]
+                if name_data.empty:
+                    continue  # 데이터가 전혀 없으면 건너뜀
+                start_serial = int(name_data[Col.YEAR].min() * 12 + name_data[Col.MONTH].min())
+            
+            for serial in range(start_serial, end_serial + 1):
+                year = serial // 12
+                month = serial % 12
+                if month == 0:
+                    year -= 1
+                    month = 12
+                all_periods.append({Col.NAME: name, Col.YEAR: year, Col.MONTH: month})
+        
+        if not all_periods:
+            return pd.DataFrame(), 0
+            
+        groups = pd.DataFrame(all_periods)
+    else:
+        # [기존 로직] 그룹핑 기준: 데이터에 존재하는 (이름, 년, 월)
+        groups = target_df[[Col.NAME, Col.YEAR, Col.MONTH]].drop_duplicates()
     
     # 3. 각 그룹별로 필요한 Canonical Code (1, 2, 3)를 Cartesian Product로 생성
     groups["key"] = 1

@@ -11,7 +11,8 @@ from data_processor import (
     detect_errors, 
     generate_missed_months, 
     to_excel_bytes,
-    normalize_names
+    normalize_names,
+    extract_date_from_filename
 )
 from constants import Col, Status
 
@@ -643,7 +644,20 @@ def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, en
 
         # 7. 미납월 생성 및 병합
         filter_arg = df_first_payment if use_first_payment_filter else None
-        df_missed, filtered_count = generate_missed_months(df_view, filter_arg, filename=main_file.name)
+        
+        # 파일명에서 기준 년월 추출
+        ref_date = extract_date_from_filename(main_file.name)
+        ref_year = ref_date[0] if ref_date else end_year
+        ref_month = ref_date[1] if ref_date else 12
+        
+        df_missed, filtered_count = generate_missed_months(
+            df_view, 
+            filter_arg, 
+            filename=main_file.name,
+            graduation_names=graduation_names,
+            end_year=ref_year,
+            end_month=ref_month
+        )
 
         if not df_missed.empty:
             if df_errors.empty:
