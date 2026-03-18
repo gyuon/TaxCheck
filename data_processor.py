@@ -370,7 +370,7 @@ def generate_missed_months(
     
     ref_date = extract_date_from_filename(filename) if filename else None
     if ref_date:
-        cutoff_serial = ref_date[0] * 12 + ref_date[1] - 3
+        cutoff_serial = ref_date[0] * 12 + ref_date[1] - 2
         if "serial" not in missed.columns:
             missed["serial"] = missed[Col.YEAR] * 12 + missed[Col.MONTH]
         missed[Col.REMARKS] = missed.apply(
