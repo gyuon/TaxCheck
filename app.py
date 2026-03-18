@@ -28,7 +28,7 @@ st.set_page_config(page_title="인별납부내역 오류검출", layout="wide")
 
 st.markdown("""
     <div style="text-align: center; padding: 0 0 20px 0;">
-        <h1 style="font-size: 36px; font-weight: 700; letter-spacing: -1px; color: #1F2937; margin: 0;">인별납부내역 자동화</h1>
+        <h1 style="font-size: 32px; font-weight: 600; letter-spacing: -0.5px; color: #5D4E37; margin: 0;">인별납부내역 자동화</h1>
     </div>
 """, unsafe_allow_html=True)
 
@@ -40,131 +40,343 @@ if "cached_sheet_title" not in st.session_state:
     st.session_state["cached_sheet_title"] = None
 # ... (render_styled_table, reset_app 함수는 아래에 정의됨) ...
 
-# --- UI 개선을 위한 노르딕 브루탈리스트 CSS ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
 
-    /* 전역 배경 및 폰트 설정 */
+    :root {
+        --warm-bg: #FBF9F6;
+        --warm-bg-card: #FFFFFF;
+        --warm-bg-card-accent: #FFF8F0;
+        --warm-text: #4A3F35;
+        --warm-text-secondary: #7A6B5A;
+        --warm-text-muted: #A89B8A;
+        --warm-primary: #D4795A;
+        --warm-primary-hover: #C06546;
+        --warm-primary-light: #FCEAE2;
+        --warm-border: #E8E0D5;
+        --warm-success: #6BAF6B;
+        --warm-success-bg: #F0F7F0;
+        --warm-info-bg: #F5F3EF;
+        --warm-error: #C75A45;
+        --warm-shadow: rgba(74, 63, 53, 0.06);
+        --warm-shadow-hover: rgba(74, 63, 53, 0.1);
+        --warm-shadow-lg: rgba(74, 63, 53, 0.12);
+    }
+
     .main {
-        background-color: #FFFFFF !important;
-        font-family: 'Inter', sans-serif;
+        background-color: var(--warm-bg) !important;
+        font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     
-    /* 텍스트 색상 고정 */
-    h1, h2, h3, h4, p, span, label {
-        color: #1F2937 !important;
+    h1, h2, h3, h4, h5, p, span, label, li {
+        color: var(--warm-text) !important;
     }
 
-    /* [중요] 모든 입력창 모서리 완전 직각화 (강력한 셀렉터) */
     div[data-testid="stNumberInput"] *, 
     div[data-testid="stTextInput"] *,
     div[data-baseweb="input"] *,
     div[data-baseweb="base-input"] * {
-        border-radius: 0px !important;
+        border-radius: 10px !important;
     }
 
-    /* 입력창 배경색 및 라인 정돈 */
     div[data-baseweb="input"] {
-        border: none !important;
+        border: 1.5px solid var(--warm-border) !important;
         background-color: #FFFFFF !important;
-    }
-
-    /* 노르딕 브루탈리스트 카드 스타일 (졸업생 명단 연결 등) */
-    div[data-testid="stColumn"]:has(div.nordic-marker) {
-        background-color: #DBEAFE !important;
-        padding: 16px 20px !important;
-        margin-bottom: 8px !important;
-        border-radius: 0px !important;
-        display: flex;
-        flex-direction: column;
-        transition: all 0.2s;
-    }
-    div[data-testid="stColumn"]:has(div.nordic-marker):hover {
-        box-shadow: 10px 10px 0px #1F2937;
-        transform: translate(-3px, -3px);
+        transition: all 0.2s ease;
     }
     
-    /* 카드 내 제목 스타일 */
-    div[data-testid="stColumn"] h5 {
-        color: #1F2937 !important;
-        font-weight: 900 !important;
-        font-size: 1.3rem !important;
-        margin-top: 0 !important;
-        margin-bottom: 12px !important;
-        border-bottom: 2.5px solid #1F2937 !important;
-        padding-bottom: 6px !important;
+    div[data-baseweb="input"]:focus-within {
+        border-color: var(--warm-primary) !important;
+        box-shadow: 0 0 0 3px var(--warm-primary-light) !important;
     }
 
-    /* 분석 실행 및 다운로드 버튼 스타일 통합: 고대비 노르딕 브루탈리즘 */
-    div.stButton > button, div.stDownloadButton > button {
-        background-color: #1F2937 !important;
-        color: #FFFFFF !important;
-        border: 3px solid #000000 !important;
-        border-radius: 0px !important;
-        font-weight: 900 !important;
-        padding: 12px 0px !important;
-        letter-spacing: 1px;
-        transition: all 0.1s;
-        width: 100% !important;
+    div[data-testid="stColumn"]:has(div.nordic-marker) {
+        background-color: var(--warm-bg-card) !important;
+        padding: 24px 28px !important;
+        margin-bottom: 16px !important;
+        border-radius: 20px !important;
+        border: 1px solid var(--warm-border) !important;
+        display: flex;
+        flex-direction: column;
+        transition: all 0.25s ease;
+        box-shadow: 0 2px 12px var(--warm-shadow);
     }
+    
+    div[data-testid="stColumn"]:has(div.nordic-marker):hover {
+        box-shadow: 0 8px 24px var(--warm-shadow-hover);
+        transform: translateY(-3px);
+        border-color: var(--warm-primary-light) !important;
+    }
+    
+    div[data-testid="stColumn"] h5 {
+        color: var(--warm-text) !important;
+        font-weight: 600 !important;
+        font-size: 1rem !important;
+        margin-top: 0 !important;
+        margin-bottom: 18px !important;
+        border-bottom: 2px solid var(--warm-primary-light) !important;
+        padding-bottom: 12px !important;
+        letter-spacing: -0.3px;
+    }
+
+    div.stButton > button, div.stDownloadButton > button {
+        background-color: var(--warm-primary) !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 12px !important;
+        font-weight: 600 !important;
+        padding: 14px 20px !important;
+        letter-spacing: -0.3px;
+        transition: all 0.2s ease;
+        width: 100% !important;
+        box-shadow: 0 2px 8px rgba(212, 121, 90, 0.2);
+        white-space: nowrap !important;
+    }
+    
     div.stButton > button p, div.stButton > button span,
     div.stDownloadButton > button p, div.stDownloadButton > button span {
         color: #FFFFFF !important;
-        font-weight: 900 !important;
+        font-weight: 600 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
     }
+    
     div.stButton > button:hover, div.stDownloadButton > button:hover {
-        background-color: #374151 !important;
-        box-shadow: 6px 6px 0px #9CA3AF;
-        transform: translate(-1px, -1px);
+        background-color: var(--warm-primary-hover) !important;
+        box-shadow: 0 4px 16px rgba(212, 121, 90, 0.3);
+        transform: translateY(-2px);
+    }
+    
+    div.stButton > button:active, div.stDownloadButton > button:active {
+        transform: translateY(0);
     }
 
-    /* 구분선 스타일 */
     hr {
-        margin: 4rem 0 !important;
-        border-color: #1F2937 !important;
+        margin: 3rem 0 !important;
+        border-color: var(--warm-border) !important;
         opacity: 1 !important;
     }
 
     [data-testid="stFileUploaderDropzone"] {
-        border-radius: 0px !important;    /* 테두리 곡률 제거 */
-        background-color: #FFF9E6 !important; /* 배경색 흰색으로 변경 */
+        border-radius: 16px !important;
+        border: 2px dashed var(--warm-border) !important;
+        background-color: var(--warm-bg-card) !important;
+        transition: all 0.2s ease;
+    }
+    
+    [data-testid="stFileUploaderDropzone"]:hover {
+        border-color: var(--warm-primary) !important;
+        background-color: var(--warm-bg-card-accent) !important;
     }
 
-    /* 1. "Drag and drop file here" 문구 수정 */
     [data-testid="stFileUploaderDropzoneInstructions"] div span:first-child {
-        font-size: 0px; /* 기존 텍스트 숨김 */
+        font-size: 0px;
     }
     [data-testid="stFileUploaderDropzoneInstructions"] div span:first-child::after {
         content: "여기에 파일을 끌어다 놓으세요";
-        font-size: 16px; /* Streamlit 기본 폰트 크기 */
+        font-size: 15px;
+        color: var(--warm-text-secondary);
         visibility: visible;
         display: block;
     }
 
-    /* 2. "Browse files" 버튼 문구 수정 */
     [data-testid="stFileUploader"] [data-testid="stBaseButton-secondary"] {
-        font-size: 0px !important; /* 기존 'Browse files' 숨김 */
-        border-radius: 0px !important;
-        background-color: #FFFFFF !important;
+        font-size: 0px !important;
+        border-radius: 10px !important;
+        background-color: var(--warm-bg-card-accent) !important;
+        border: 1px solid var(--warm-border) !important;
     }
     [data-testid="stFileUploader"] [data-testid="stBaseButton-secondary"]::after {
         content: "파일 찾기";
-        font-size: 14px; /* 버튼 텍스트 크기 */
+        font-size: 14px;
+        color: var(--warm-text);
         visibility: visible;
         display: block;
     }
 
-    /* 3. (선택사항) "Limit 20MB per file..." 문구 수정 */
     [data-testid="stFileUploaderDropzoneInstructions"] div span:last-child {
         font-size: 0px;
     }
     [data-testid="stFileUploaderDropzoneInstructions"] div span:last-child::after {
         content: "최대 20MB • XLSX 파일만 가능";
         font-size: 12px;
+        color: var(--warm-text-muted);
         visibility: visible;
         display: block;
         margin-top: 5px;
+    }
+    
+    div[data-testid="stAlert"] {
+        border-radius: 14px !important;
+        border: none !important;
+        padding: 16px 20px !important;
+    }
+    
+    div[data-testid="stAlert"][data-baseweb="notification"][kind="success"] {
+        background-color: var(--warm-success-bg) !important;
+    }
+    
+    div[data-testid="stAlert"][data-baseweb="notification"][kind="success"] p {
+        color: #4A7C4A !important;
+    }
+    
+    div[data-testid="stAlert"][data-baseweb="notification"][kind="info"] {
+        background-color: var(--warm-info-bg) !important;
+    }
+    
+    div[data-testid="stAlert"][data-baseweb="notification"][kind="info"] p {
+        color: var(--warm-text-secondary) !important;
+    }
+    
+    .result-message {
+        background-color: var(--warm-info-bg) !important;
+        border-radius: 14px !important;
+        padding: 16px 24px !important;
+        margin-bottom: 24px !important;
+        border-left: 4px solid var(--warm-primary) !important;
+    }
+    
+    .result-message p {
+        color: var(--warm-text) !important;
+        font-size: 14px !important;
+        margin: 0 !important;
+        line-height: 1.6 !important;
+    }
+    
+    .kpi-container {
+        display: flex;
+        gap: 20px;
+        margin-bottom: 28px;
+    }
+    
+    .kpi-card {
+        flex: 1;
+        background-color: var(--warm-bg-card);
+        border-radius: 20px;
+        border: 1px solid var(--warm-border);
+        padding: 24px 20px;
+        box-shadow: 0 4px 16px var(--warm-shadow);
+        transition: all 0.25s ease;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .kpi-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background-color: var(--warm-border);
+    }
+    
+    .kpi-card:hover {
+        box-shadow: 0 8px 28px var(--warm-shadow-hover);
+        transform: translateY(-3px);
+    }
+    
+    .kpi-label {
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        color: var(--warm-text-muted) !important;
+        margin-bottom: 12px !important;
+        margin-top: 0 !important;
+    }
+    
+    .kpi-value {
+        font-size: 36px;
+        font-weight: 700;
+        color: var(--warm-text) !important;
+        margin: 0 !important;
+        letter-spacing: -2px;
+        line-height: 1.1;
+    }
+
+    .kpi-container .kpi-card .kpi-value {
+        font-size: 36px !important;
+    }
+    
+    .kpi-card-unpaid {
+        background: linear-gradient(135deg, #FFF5F5 0%, #FFEFEF 100%);
+        border-color: #FED7D7;
+    }
+    .kpi-card-unpaid::before { background-color: #E53E3E; }
+    .kpi-card-unpaid .kpi-label { color: #C53030 !important; }
+    .kpi-card-unpaid .kpi-value { color: #C53030 !important; font-size: 36px !important; }
+    .kpi-card-unpaid:hover { box-shadow: 0 8px 28px rgba(229, 62, 62, 0.15); }
+    
+    .kpi-card-insufficient {
+        background: linear-gradient(135deg, #FFFAF0 0%, #FFF5E6 100%);
+        border-color: #FEEBC8;
+    }
+    .kpi-card-insufficient::before { background-color: #DD6B20; }
+    .kpi-card-insufficient .kpi-label { color: #C05621 !important; }
+    .kpi-card-insufficient .kpi-value { color: #C05621 !important; font-size: 36px !important; }
+    .kpi-card-insufficient:hover { box-shadow: 0 8px 28px rgba(221, 107, 32, 0.15); }
+    
+    .kpi-card-excess {
+        background: linear-gradient(135deg, #F0FFF4 0%, #E6FFED 100%);
+        border-color: #C6F6D5;
+    }
+    .kpi-card-excess::before { background-color: #38A169; }
+    .kpi-card-excess .kpi-label { color: #276749 !important; }
+    .kpi-card-excess .kpi-value { color: #276749 !important; font-size: 36px !important; }
+    .kpi-card-excess:hover { box-shadow: 0 8px 28px rgba(56, 161, 105, 0.15); }
+    
+    .kpi-card-total {
+        background: linear-gradient(135deg, #FFF8F0 0%, #FFEDE0 100%);
+        border-color: #FED7AA;
+    }
+    .kpi-card-total::before { background-color: var(--warm-primary); }
+    .kpi-card-total .kpi-label { color: var(--warm-primary) !important; }
+    .kpi-card-total .kpi-value { color: var(--warm-primary) !important; font-size: 36px !important; }
+    .kpi-card-total:hover { box-shadow: 0 8px 28px rgba(212, 121, 90, 0.2); }
+    
+    .nordic-card, .nordic-card-accent {
+        background-color: var(--warm-bg-card) !important;
+        border-radius: 16px !important;
+        border: 1px solid var(--warm-border) !important;
+        padding: 20px 24px !important;
+        box-shadow: 0 2px 12px var(--warm-shadow);
+        transition: all 0.25s ease;
+    }
+    
+    .nordic-card:hover, .nordic-card-accent:hover {
+        box-shadow: 0 6px 20px var(--warm-shadow-hover);
+        transform: translateY(-2px);
+    }
+    
+    .nordic-card-accent {
+        background-color: var(--warm-bg-card-accent) !important;
+        border-color: var(--warm-primary-light) !important;
+    }
+    
+    .nordic-card p, .nordic-card-accent p {
+        color: var(--warm-text) !important;
+    }
+    
+    div[data-testid="stVerticalBlock"] h2 {
+        color: var(--warm-text) !important;
+        font-weight: 600 !important;
+    }
+    
+    section[data-testid="stSidebar"] {
+        background-color: var(--warm-bg) !important;
+    }
+    
+    .stSubheader {
+        font-size: 1.3rem !important;
+        font-weight: 600 !important;
+        color: var(--warm-text) !important;
+        margin-bottom: 20px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -289,21 +501,21 @@ if "df_errors" not in st.session_state and not st.session_state.get("processing"
             
             if st.session_state["cached_sheet_title"]:
                 st.markdown(f"""
-                    <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #1F2937;">
+                    <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #5D4E37;">
                         <span style="font-size: 18px;">🔗</span>
-                        <span style="font-weight: 700; font-size: 14px;">{st.session_state['cached_sheet_title']}</span>
+                        <span style="font-weight: 500; font-size: 14px;">{st.session_state['cached_sheet_title']}</span>
                     </div>
                 """, unsafe_allow_html=True)
             else:
                 st.markdown("""
-                    <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #EF4444;">
-                        <span style="font-size: 14px; font-weight: 600;">⚠️ 연결 실패 (URL 확인)</span>
+                    <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #D4644A;">
+                        <span style="font-size: 14px; font-weight: 500;">⚠️ 연결 실패 (URL 확인)</span>
                     </div>
                 """, unsafe_allow_html=True)
         else:
             st.markdown("""
-                <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #9CA3AF;">
-                    <span style="font-size: 13px; font-weight: 500;">졸업생 명단 URL을 입력해 주세요.</span>
+                <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #A89880;">
+                    <span style="font-size: 13px; font-weight: 400;">졸업생 명단 URL을 입력해 주세요.</span>
                 </div>
             """, unsafe_allow_html=True)
 
@@ -586,7 +798,7 @@ if "df_errors" in st.session_state:
         period_count = summary.get("period_count", 0)
 
     # 상단 헤더 및 다운로드 버튼
-    header_col, action_col = st.columns([1, 0.4]) # action_col 넓이 확보
+    header_col, action_col = st.columns([1, 0.5])
     with header_col:
         st.subheader("분석 결과")
     with action_col:
@@ -598,8 +810,7 @@ if "df_errors" in st.session_state:
             st.session_state.get("df_summary", pd.DataFrame()),
         )
         
-        # 버튼 그룹 (다운로드 + 새로 분석하기)
-        b_dl, b_new = st.columns([1.5, 1], gap="small")
+        b_dl, b_new = st.columns([1.2, 1], gap="small")
         with b_dl:
             st.download_button(
                 label="결과 엑셀 다운로드",
@@ -612,38 +823,42 @@ if "df_errors" in st.session_state:
             if st.button("새로 분석하기", use_container_width=True):
                 reset_app()
     
-    # 요약 정보 렌더링
-    st.success(f"✅ 처리가 완료되었습니다. (소요 시간: {duration:.2f}초)")
-    
-    # 노르딕 브루탈리스트 KPI 위젯
     st.markdown(f"""
-        <div style="display: flex; gap: 24px; margin-bottom: 32px; padding: 0 40px;">
-            <div class="nordic-card" style="flex: 1;">
-                <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">분석 대상</p>
-                <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{period_count:,}</p>
+        <div class="kpi-container">
+            <div class="kpi-card">
+                <p class="kpi-label">분석 대상</p>
+                <div class="kpi-value"><span style="font-size: 36px;">{period_count:,}</span></div>
             </div>
-            <div class="nordic-card-accent" style="flex: 1;">
-                <p style="font-size: 12px; font-weight: 900; color: #1F2937; margin-bottom: 8px;">미납</p>
-                <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_miss} 건</p>
+            <div class="kpi-card kpi-card-unpaid">
+                <p class="kpi-label">미납</p>
+                <div class="kpi-value"><span style="font-size: 36px;">{c_miss:,}</span></div>
             </div>
-            <div class="nordic-card" style="flex: 1;">
-                <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">부족</p>
-                <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_under} 건</p>
+            <div class="kpi-card kpi-card-insufficient">
+                <p class="kpi-label">부족</p>
+                <div class="kpi-value"><span style="font-size: 36px;">{c_under:,}</span></div>
             </div>
-            <div class="nordic-card" style="flex: 1;">
-                <p style="font-size: 12px; font-weight: 900; color: #9CA3AF; margin-bottom: 8px;">초과</p>
-                <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{c_over} 건</p>
+            <div class="kpi-card kpi-card-excess">
+                <p class="kpi-label">초과</p>
+                <div class="kpi-value"><span style="font-size: 36px;">{c_over:,}</span></div>
             </div>
-            <div class="nordic-card-accent" style="flex: 1;">
-                <p style="font-size: 12px; font-weight: 900; color: #1F2937; margin-bottom: 8px;">오류 합계</p>
-                <p style="font-size: 32px; font-weight: 900; color: #1F2937; margin: 0;">{total_errors} 건</p>
+            <div class="kpi-card kpi-card-total">
+                <p class="kpi-label">오류 합계</p>
+                <div class="kpi-value"><span style="font-size: 36px;">{total_errors:,}</span></div>
             </div>
         </div>
     """, unsafe_allow_html=True)
     
+    messages = []
+    messages.append(f"✅ 처리 완료 (소요 시간: {duration:.2f}초)")
     if c_filt > 0:
-        st.info(f"💡 **참고:** {c_filt}건의 미납 내역이 '최초 납부월 이전'이라 제외되었습니다.")
+        messages.append(f"💡 {c_filt}건의 미납 내역이 '최초 납부월 이전'이라 제외되었습니다.")
     elif total_errors == 0:
-        st.info("검출된 오류나 미납 내역이 없습니다.")
+        messages.append("💡 검출된 오류나 미납 내역이 없습니다.")
+    
+    st.markdown(f"""
+        <div class="result-message">
+            {'<br>'.join(messages)}
+        </div>
+    """, unsafe_allow_html=True)
 
 
