@@ -225,7 +225,8 @@ def generate_missed_months(
     filename: str | None = None,
     graduation_names: list[str] | None = None,
     end_year: int | None = None,
-    end_month: int | None = None
+    end_month: int | None = None,
+    exemption_map: dict[str, list[str]] | None = None
 ) -> tuple[pd.DataFrame, int]:
     """
     미납월(누락된 코드)을 생성한다.
@@ -346,6 +347,24 @@ def generate_missed_months(
         filtered_count = (~mask).sum()
         
         missed = missed[mask]
+        
+        if missed.empty:
+            return pd.DataFrame(), filtered_count
+    
+    # 면제기금 필터링
+    if exemption_map:
+        canonical_to_fund = {1: FundName.OPERATING, 2: FundName.COOPERATION, 3: FundName.WELFARE}
+        
+        def is_exempted(row):
+            name = row[Col.NAME]
+            canonical = row["canonical"]
+            if name not in exemption_map:
+                return False
+            fund_name = canonical_to_fund.get(canonical, "")
+            return fund_name in exemption_map[name]
+        
+        exempt_mask = missed.apply(is_exempted, axis=1)
+        missed = missed[~exempt_mask].copy()
         
         if missed.empty:
             return pd.DataFrame(), filtered_count

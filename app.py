@@ -610,6 +610,19 @@ def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, en
                 return
             
             graduation_names = list(set(df_sheet[df_sheet["구분"].str.strip() == "졸업생"]["이름"].tolist()))
+            
+            # 면제기금 매핑 생성 (예: {"김장호": ["협력", "복지"]})
+            exemption_map: dict[str, list[str]] = {}
+            if "면제기금" in df_sheet.columns:
+                for _, row in df_sheet[df_sheet["구분"].str.strip() == "졸업생"].iterrows():
+                    name = str(row["이름"]).strip()
+                    exempt_str = str(row.get("면제기금", "")).strip()
+                    if name and exempt_str:
+                        # 쉼표로 구분된 기금명 파싱
+                        exempt_funds = [f.strip() for f in exempt_str.split(",") if f.strip()]
+                        if exempt_funds:
+                            exemption_map[name] = exempt_funds
+            
             df = df[df["이름"].isin(graduation_names)].copy()
             
             total_grad_count = len(df) # 졸업생 전체 납부 건수 (년도 필터링 전)
@@ -656,7 +669,8 @@ def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, en
             filename=main_file.name,
             graduation_names=graduation_names,
             end_year=ref_year,
-            end_month=ref_month
+            end_month=ref_month,
+            exemption_map=exemption_map
         )
 
         if not df_missed.empty:
