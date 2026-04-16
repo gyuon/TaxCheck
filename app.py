@@ -13,6 +13,7 @@ from constants import Col, Status
 from io import BytesIO
 from datetime import datetime
 from typing import cast
+import os
 import pandas as pd
 import time
 
@@ -502,4 +503,4 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary):
 
 
 
-ui.run(title="인별납부내역 오류검출", port=8090, reload=True, storage_secret="taxcheck-local-dev")
+ui.run(title="인별납부내역 오류검출", port=int(os.environ.get("PORT", 8090)), reload=True, storage_secret=os.environ.get("STORAGE_SECRET", "taxcheck-local-dev"))
