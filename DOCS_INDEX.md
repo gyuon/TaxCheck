@@ -10,7 +10,7 @@
 
 **AI 어시스턴트용 프로젝트 컨텍스트**
 
-- 기술 스택: Python, Streamlit, Pandas, openpyxl
+- 기술 스택: Python, NiceGUI, Pandas, openpyxl
 - 아키텍처: 계층 구조, 데이터 흐름, 오류 검출 로직
 - 주요 파일: app.py, data_processor.py, constants.py
 - 컨벤션: 컬럼명 규칙, 상태값, UI 스타일
@@ -34,7 +34,6 @@
 | 관련 기능 | 관련 파일 |
 |----------|----------|
 | 설치/실행 | `requirements.txt`, `app.py` |
-| 테마 설정 | `.streamlit/config.toml` |
 
 ---
 
@@ -69,8 +68,7 @@
 
 | 기능 | 추천 문서 |
 |------|----------|
-| Streamlit 구조 | `AGENTS.md` > Architecture |
-| 테마 설정 | `.streamlit/config.toml` 직접 확인 |
+| NiceGUI 구조 | `AGENTS.md` > Architecture |
 | 노르딕 브루탈리즘 | `AGENTS.md` > UI 스타일 |
 
 ### 🔧 개발

@@ -1,892 +1,505 @@
-import streamlit as st
-import pandas as pd
-from datetime import datetime
-from typing import cast
-import time
-import streamlit.components.v1 as components
-import st_aggrid  # noqa: F401
+from nicegui import app, run, ui
+from nicegui.events import UploadEventArguments
 from data_processor import (
-    get_google_sheets_title, 
-    extract_first_payment_month, 
-    detect_errors, 
-    generate_missed_months, 
+    get_google_sheets_title,
+    extract_first_payment_month,
+    detect_errors,
+    generate_missed_months,
     to_excel_bytes,
     normalize_names,
-    extract_date_from_filename
+    extract_date_from_filename,
 )
 from constants import Col, Status
+from io import BytesIO
+from datetime import datetime
+from typing import cast
+import pandas as pd
+import time
 
-# [수정] .fillna 시 object 타입 배열의 다운캐스팅 FutureWarning 해결
-pd.set_option('future.no_silent_downcasting', True)
+pd.set_option("future.no_silent_downcasting", True)
 
-@st.cache_data(show_spinner=False)
-def build_excel_bytes(df_first, df_errors, output_filename, df_summary=None):
-    # 재실행 시 재계산을 방지하기 위해 생성된 엑셀 바이트를 캐싱함
-    return to_excel_bytes(df_first, df_errors, output_filename, df_summary)
-
-
-st.set_page_config(page_title="인별납부내역 오류검출", layout="wide")
-
-st.markdown("""
-    <div style="text-align: center; padding: 0 0 20px 0;">
-        <h1 style="font-size: 32px; font-weight: 600; letter-spacing: -0.5px; color: #5D4E37; margin: 0;">인별납부내역 자동화</h1>
-    </div>
-""", unsafe_allow_html=True)
-
-if "processing" not in st.session_state:
-    st.session_state["processing"] = False
-if "previous_gsheet_url" not in st.session_state:
-    st.session_state["previous_gsheet_url"] = ""
-if "cached_sheet_title" not in st.session_state:
-    st.session_state["cached_sheet_title"] = None
-# ... (render_styled_table, reset_app 함수는 아래에 정의됨) ...
-
-st.markdown("""
-<style>
-    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
-
-    :root {
-        --warm-bg: #FBF9F6;
-        --warm-bg-card: #FFFFFF;
-        --warm-bg-card-accent: #FFF8F0;
-        --warm-text: #4A3F35;
-        --warm-text-secondary: #7A6B5A;
-        --warm-text-muted: #A89B8A;
-        --warm-primary: #D4795A;
-        --warm-primary-hover: #C06546;
-        --warm-primary-light: #FCEAE2;
-        --warm-border: #E8E0D5;
-        --warm-success: #6BAF6B;
-        --warm-success-bg: #F0F7F0;
-        --warm-info-bg: #F5F3EF;
-        --warm-error: #C75A45;
-        --warm-shadow: rgba(74, 63, 53, 0.06);
-        --warm-shadow-hover: rgba(74, 63, 53, 0.1);
-        --warm-shadow-lg: rgba(74, 63, 53, 0.12);
-    }
-
-    .main {
-        background-color: var(--warm-bg) !important;
-        font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif;
-    }
-    
-    h1, h2, h3, h4, h5, p, span, label, li {
-        color: var(--warm-text) !important;
-    }
-
-    div[data-testid="stNumberInput"] *, 
-    div[data-testid="stTextInput"] *,
-    div[data-baseweb="input"] *,
-    div[data-baseweb="base-input"] * {
-        border-radius: 10px !important;
-    }
-
-    div[data-baseweb="input"] {
-        border: 1.5px solid var(--warm-border) !important;
-        background-color: #FFFFFF !important;
-        transition: all 0.2s ease;
-    }
-    
-    div[data-baseweb="input"]:focus-within {
-        border-color: var(--warm-primary) !important;
-        box-shadow: 0 0 0 3px var(--warm-primary-light) !important;
-    }
-
-    div[data-testid="stColumn"]:has(div.nordic-marker) {
-        background-color: var(--warm-bg-card) !important;
-        padding: 24px 28px !important;
-        margin-bottom: 16px !important;
-        border-radius: 20px !important;
-        border: 1px solid var(--warm-border) !important;
-        display: flex;
-        flex-direction: column;
-        transition: all 0.25s ease;
-        box-shadow: 0 2px 12px var(--warm-shadow);
-    }
-    
-    div[data-testid="stColumn"]:has(div.nordic-marker):hover {
-        box-shadow: 0 8px 24px var(--warm-shadow-hover);
-        transform: translateY(-3px);
-        border-color: var(--warm-primary-light) !important;
-    }
-    
-    div[data-testid="stColumn"] h5 {
-        color: var(--warm-text) !important;
-        font-weight: 600 !important;
-        font-size: 1rem !important;
-        margin-top: 0 !important;
-        margin-bottom: 18px !important;
-        border-bottom: 2px solid var(--warm-primary-light) !important;
-        padding-bottom: 12px !important;
-        letter-spacing: -0.3px;
-    }
-
-    div.stButton > button, div.stDownloadButton > button {
-        background-color: var(--warm-primary) !important;
-        color: #FFFFFF !important;
-        border: none !important;
-        border-radius: 12px !important;
-        font-weight: 600 !important;
-        padding: 14px 20px !important;
-        letter-spacing: -0.3px;
-        transition: all 0.2s ease;
-        width: 100% !important;
-        box-shadow: 0 2px 8px rgba(212, 121, 90, 0.2);
-        white-space: nowrap !important;
-    }
-    
-    div.stButton > button p, div.stButton > button span,
-    div.stDownloadButton > button p, div.stDownloadButton > button span {
-        color: #FFFFFF !important;
-        font-weight: 600 !important;
-        white-space: nowrap !important;
-        overflow: hidden !important;
-        text-overflow: ellipsis !important;
-    }
-    
-    div.stButton > button:hover, div.stDownloadButton > button:hover {
-        background-color: var(--warm-primary-hover) !important;
-        box-shadow: 0 4px 16px rgba(212, 121, 90, 0.3);
-        transform: translateY(-2px);
-    }
-    
-    div.stButton > button:active, div.stDownloadButton > button:active {
-        transform: translateY(0);
-    }
-
-    hr {
-        margin: 3rem 0 !important;
-        border-color: var(--warm-border) !important;
-        opacity: 1 !important;
-    }
-
-    [data-testid="stFileUploaderDropzone"] {
-        border-radius: 16px !important;
-        border: 2px dashed var(--warm-border) !important;
-        background-color: var(--warm-bg-card) !important;
-        transition: all 0.2s ease;
-    }
-    
-    [data-testid="stFileUploaderDropzone"]:hover {
-        border-color: var(--warm-primary) !important;
-        background-color: var(--warm-bg-card-accent) !important;
-    }
-
-    [data-testid="stFileUploaderDropzoneInstructions"] div span:first-child {
-        font-size: 0px;
-    }
-    [data-testid="stFileUploaderDropzoneInstructions"] div span:first-child::after {
-        content: "여기에 파일을 끌어다 놓으세요";
-        font-size: 15px;
-        color: var(--warm-text-secondary);
-        visibility: visible;
-        display: block;
-    }
-
-    [data-testid="stFileUploader"] [data-testid="stBaseButton-secondary"] {
-        font-size: 0px !important;
-        border-radius: 10px !important;
-        background-color: var(--warm-bg-card-accent) !important;
-        border: 1px solid var(--warm-border) !important;
-    }
-    [data-testid="stFileUploader"] [data-testid="stBaseButton-secondary"]::after {
-        content: "파일 찾기";
-        font-size: 14px;
-        color: var(--warm-text);
-        visibility: visible;
-        display: block;
-    }
-
-    [data-testid="stFileUploaderDropzoneInstructions"] div span:last-child {
-        font-size: 0px;
-    }
-    [data-testid="stFileUploaderDropzoneInstructions"] div span:last-child::after {
-        content: "최대 20MB • XLSX 파일만 가능";
-        font-size: 12px;
-        color: var(--warm-text-muted);
-        visibility: visible;
-        display: block;
-        margin-top: 5px;
-    }
-    
-    div[data-testid="stAlert"] {
-        border-radius: 14px !important;
-        border: none !important;
-        padding: 16px 20px !important;
-    }
-    
-    div[data-testid="stAlert"][data-baseweb="notification"][kind="success"] {
-        background-color: var(--warm-success-bg) !important;
-    }
-    
-    div[data-testid="stAlert"][data-baseweb="notification"][kind="success"] p {
-        color: #4A7C4A !important;
-    }
-    
-    div[data-testid="stAlert"][data-baseweb="notification"][kind="info"] {
-        background-color: var(--warm-info-bg) !important;
-    }
-    
-    div[data-testid="stAlert"][data-baseweb="notification"][kind="info"] p {
-        color: var(--warm-text-secondary) !important;
-    }
-    
-    .result-message {
-        background-color: var(--warm-info-bg) !important;
-        border-radius: 14px !important;
-        padding: 16px 24px !important;
-        margin-bottom: 24px !important;
-        border-left: 4px solid var(--warm-primary) !important;
-    }
-    
-    .result-message p {
-        color: var(--warm-text) !important;
-        font-size: 14px !important;
-        margin: 0 !important;
-        line-height: 1.6 !important;
-    }
-    
-    .kpi-container {
-        display: flex;
-        gap: 20px;
-        margin-bottom: 28px;
-    }
-    
-    .kpi-card {
-        flex: 1;
-        background-color: var(--warm-bg-card);
-        border-radius: 20px;
-        border: 1px solid var(--warm-border);
-        padding: 24px 20px;
-        box-shadow: 0 4px 16px var(--warm-shadow);
-        transition: all 0.25s ease;
-        text-align: center;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .kpi-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 4px;
-        background-color: var(--warm-border);
-    }
-    
-    .kpi-card:hover {
-        box-shadow: 0 8px 28px var(--warm-shadow-hover);
-        transform: translateY(-3px);
-    }
-    
-    .kpi-label {
-        font-size: 13px;
-        font-weight: 600;
-        letter-spacing: 0.3px;
-        color: var(--warm-text-muted) !important;
-        margin-bottom: 12px !important;
-        margin-top: 0 !important;
-    }
-    
-    .kpi-value {
-        font-size: 36px;
-        font-weight: 700;
-        color: var(--warm-text) !important;
-        margin: 0 !important;
-        letter-spacing: -2px;
-        line-height: 1.1;
-    }
-
-    .kpi-container .kpi-card .kpi-value {
-        font-size: 36px !important;
-    }
-    
-    .kpi-card-unpaid {
-        background: linear-gradient(135deg, #FFF5F5 0%, #FFEFEF 100%);
-        border-color: #FED7D7;
-    }
-    .kpi-card-unpaid::before { background-color: #E53E3E; }
-    .kpi-card-unpaid .kpi-label { color: #C53030 !important; }
-    .kpi-card-unpaid .kpi-value { color: #C53030 !important; font-size: 36px !important; }
-    .kpi-card-unpaid:hover { box-shadow: 0 8px 28px rgba(229, 62, 62, 0.15); }
-    
-    .kpi-card-insufficient {
-        background: linear-gradient(135deg, #FFFAF0 0%, #FFF5E6 100%);
-        border-color: #FEEBC8;
-    }
-    .kpi-card-insufficient::before { background-color: #DD6B20; }
-    .kpi-card-insufficient .kpi-label { color: #C05621 !important; }
-    .kpi-card-insufficient .kpi-value { color: #C05621 !important; font-size: 36px !important; }
-    .kpi-card-insufficient:hover { box-shadow: 0 8px 28px rgba(221, 107, 32, 0.15); }
-    
-    .kpi-card-excess {
-        background: linear-gradient(135deg, #F0FFF4 0%, #E6FFED 100%);
-        border-color: #C6F6D5;
-    }
-    .kpi-card-excess::before { background-color: #38A169; }
-    .kpi-card-excess .kpi-label { color: #276749 !important; }
-    .kpi-card-excess .kpi-value { color: #276749 !important; font-size: 36px !important; }
-    .kpi-card-excess:hover { box-shadow: 0 8px 28px rgba(56, 161, 105, 0.15); }
-    
-    .kpi-card-total {
-        background: linear-gradient(135deg, #FFF8F0 0%, #FFEDE0 100%);
-        border-color: #FED7AA;
-    }
-    .kpi-card-total::before { background-color: var(--warm-primary); }
-    .kpi-card-total .kpi-label { color: var(--warm-primary) !important; }
-    .kpi-card-total .kpi-value { color: var(--warm-primary) !important; font-size: 36px !important; }
-    .kpi-card-total:hover { box-shadow: 0 8px 28px rgba(212, 121, 90, 0.2); }
-    
-    .nordic-card, .nordic-card-accent {
-        background-color: var(--warm-bg-card) !important;
-        border-radius: 16px !important;
-        border: 1px solid var(--warm-border) !important;
-        padding: 20px 24px !important;
-        box-shadow: 0 2px 12px var(--warm-shadow);
-        transition: all 0.25s ease;
-    }
-    
-    .nordic-card:hover, .nordic-card-accent:hover {
-        box-shadow: 0 6px 20px var(--warm-shadow-hover);
-        transform: translateY(-2px);
-    }
-    
-    .nordic-card-accent {
-        background-color: var(--warm-bg-card-accent) !important;
-        border-color: var(--warm-primary-light) !important;
-    }
-    
-    .nordic-card p, .nordic-card-accent p {
-        color: var(--warm-text) !important;
-    }
-    
-    div[data-testid="stVerticalBlock"] h2 {
-        color: var(--warm-text) !important;
-        font-weight: 600 !important;
-    }
-    
-    section[data-testid="stSidebar"] {
-        background-color: var(--warm-bg) !important;
-    }
-    
-    .stSubheader {
-        font-size: 1.3rem !important;
-        font-weight: 600 !important;
-        color: var(--warm-text) !important;
-        margin-bottom: 20px !important;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-def render_styled_table(df):
-    """
-    노르딕 브루탈리스트 스타일의 커스텀 HTML 테이블을 렌더링함.
-    장식을 배제하고 데이터 본연의 구조(그리드)를 드러냄.
-    """
-    if df.empty:
-        st.write("데이터가 없습니다.")
-        return
-
-    # 성능을 위해 상위 200건만 렌더링 (브루탈리스트 미학 강조)
-    display_df = df.head(200)
-    
-    # 컬럼 한글화 맵
-    col_map = {
-        "이름": "이름",
-        Col.YEAR: "납부년",
-        Col.MONTH: "납부월",
-        Col.STATUS: "상태",
-        Col.CODE: "코드",
-        Col.DEPOSIT: "납부액",
-        Col.STANDARD: "기준액",
-        Col.DIFF: "차액"
-    }
-    
-    html = '<div style="padding: 0 40px;"><table class="nordic-table">'
-    # 헤더
-    html += '<thead><tr>'
-    for col in display_df.columns:
-        label = col_map.get(col, col)
-        html += f'<th>{label}</th>'
-    html += '</tr></thead>'
-    
-    # 바디
-    html += '<tbody>'
-    for _, row in display_df.iterrows():
-        html += '<tr>'
-        for val in row:
-            # 숫자 천단위 콤마 처리
-            f_val = f"{val:,.0f}" if isinstance(val, (int, float)) else str(val)
-            html += f'<td>{f_val}</td>'
-        html += '</tr>'
-    html += '</tbody></table>'
-    
-    if len(df) > 200:
-        html += f'<p style="font-size: 11px; color: #9CA3AF; margin-top: 8px;">* Showing first 200 of {len(df)} records. Download Excel for full data.</p>'
-    
-    html += '</div>'
-    st.markdown(html, unsafe_allow_html=True)
+DEFAULT_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1GRPi_kP7V9YBAmS-jZKpUI9pwPCpeuaXBEGlGLHfL3g/edit?gid=0#gid=0"
 
 
-def reset_app():
-    keys_to_drop = [
-        "df_errors", "df_first_payment", "result_summary",
-        "error_msg", "error_detail", "run_params", "processing",
-        "uploaded_file", "cached_sheet_title", "download_name", "button_clicked"
-    ]
-    for k in keys_to_drop:
-        if k in st.session_state:
-            del st.session_state[k]
-    st.rerun()
+@ui.page("/")
+async def index():
+    ui.add_head_html(
+        '<style>'
+        "body { background-color: #f9fafb; font-family: 'Inter', 'Pretendard', sans-serif; }"
+        ".nicegui-content { padding: 0 !important; }"
+        "</style>"
+    )
 
-# 처리 상태가 Expander(입력창) 열림 상태에 영향을 줌
-if "settings_expanded" not in st.session_state:
-    st.session_state["settings_expanded"] = True
-if "uploaded_file" not in st.session_state:
-    st.session_state["uploaded_file"] = None
+    is_result = app.storage.user.get("result_ready")
 
-# 상단 설정 영역 (접고 펼 수 있는 설정창)
-if st.session_state.get("df_errors") is not None or st.session_state.get("processing"):
-    # [신규] 입력 영역이 닫히기 전에 미리 공간을 확보하여 스크롤 계산 유도
-    st.markdown("""
-        <style>
-            .main .block-container {
-                min-height: 500px !important;
-            }
-        </style>
-    """, unsafe_allow_html=True)
-
-# 상단 설정 영역 (물리적 컬럼 카드 레이아웃)
-if "df_errors" not in st.session_state and not st.session_state.get("processing", False):
-    st.markdown("<div style='padding: 0 20px;'>", unsafe_allow_html=True)
-    c_file, c_url, c_filter = st.columns(3, gap="large")
-
-    # 1. 원본 엑셀 업로드
-    with c_file:
-        st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
-        st.markdown("##### 원본 엑셀 업로드")
-        if st.session_state["uploaded_file"] is None:
-            uploaded = st.file_uploader(
-                "이곳에 파일을 드래그하거나 클릭하세요", 
-                type=["xlsx"], 
-                key="main_uploader", 
-                label_visibility="collapsed"
-            )
-            if uploaded is not None:
-                st.session_state["uploaded_file"] = uploaded
-                st.rerun()
-        else:
-            main_file = st.session_state["uploaded_file"]
-            st.success(f"준비됨: {main_file.name}")
-            if st.button("파일 다시 선택", key="reset_file", use_container_width=True):
-                st.session_state["uploaded_file"] = None
-                st.rerun()
-
-    # 2. 졸업생 명단 연결
-    with c_url:
-        st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
-        st.markdown("##### 졸업생 명단 연결")
-        default_url = "https://docs.google.com/spreadsheets/d/1GRPi_kP7V9YBAmS-jZKpUI9pwPCpeuaXBEGlGLHfL3g/edit?gid=0#gid=0"
-        gsheet_url = st.text_input("URL 입력", value=default_url, label_visibility="collapsed")
-        
-        if gsheet_url:
-            if gsheet_url != st.session_state["previous_gsheet_url"] or st.session_state["cached_sheet_title"] is None:
-                with st.spinner("연결 중..."):
-                    sheet_title = get_google_sheets_title(gsheet_url)
-                    st.session_state["cached_sheet_title"] = sheet_title
-                    st.session_state["previous_gsheet_url"] = gsheet_url
-            
-            if st.session_state["cached_sheet_title"]:
-                st.markdown(f"""
-                    <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #5D4E37;">
-                        <span style="font-size: 18px;">🔗</span>
-                        <span style="font-weight: 500; font-size: 14px;">{st.session_state['cached_sheet_title']}</span>
-                    </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown("""
-                    <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #D4644A;">
-                        <span style="font-size: 14px; font-weight: 500;">⚠️ 연결 실패 (URL 확인)</span>
-                    </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.markdown("""
-                <div style="display: flex; align-items: center; gap: 8px; padding-top: 8px; color: #A89880;">
-                    <span style="font-size: 13px; font-weight: 400;">졸업생 명단 URL을 입력해 주세요.</span>
-                </div>
-            """, unsafe_allow_html=True)
-
-    # 3. 분석 기간 설정
-    with c_filter:
-        st.markdown("<div class='nordic-marker'></div>", unsafe_allow_html=True)
-        st.markdown("##### 분석 기간 설정")
-        cur_year = datetime.now().year
-        s_year = st.number_input("시작", value=2013, step=1)
-        e_year = st.number_input("종료", value=cur_year, step=1)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-    
-    # 중앙 정렬 분석 실행 버튼
-    btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
-    with btn_col2:
-        if not st.session_state.get("button_clicked", False):
-            if st.button("분석 실행", type="primary", use_container_width=True, key="analyze_button", disabled=st.session_state["processing"]):
-                st.session_state["run_params"] = {
-                    "main_file": st.session_state.get("uploaded_file"),
-                    "gsheet_url": gsheet_url,
-                    "sheet_name": "raw",
-                    "header_row": 1,
-                    "start_year": s_year,
-                    "end_year": e_year,
-                    "use_filter": True
-                }
-                st.session_state["button_clicked"] = True
-                st.session_state["processing"] = True
-                
-                # JavaScript로 버튼 즉시 숨기기
-                components.html("""
-                    <script>
-                        const btn = document.querySelector('button[kc="analyze_button"]');
-                        if (btn) btn.style.display = 'none';
-                    </script>
-                """, height=0)
-                
-                st.rerun()
-def run_processing(main_file, gsheet_url, sheet_name, header_row, start_year, end_year, use_first_payment_filter):
-    # 기존 결과 및 오류 메시지 초기화
-    if "df_errors" in st.session_state: del st.session_state["df_errors"]
-    if "result_summary" in st.session_state: del st.session_state["result_summary"]
-    if "error_msg" in st.session_state: del st.session_state["error_msg"]
-
-    start_time = time.time()
-    try:
-        if not main_file or not gsheet_url:
-            st.session_state["error_msg"] = "원본 엑셀과 Google Sheets URL을 입력하세요."
-            return
-            
-        try:
-            df = pd.read_excel(main_file, sheet_name=sheet_name, header=header_row)
-        except Exception as e:
-            st.session_state["error_msg"] = f"원본 엑셀 읽기 오류: {e}"
-            return
-            
-        # 0. 컬럼명 정규화 (사용자 요청 용어로 변경: 해당년->납부년, 해당월->납부월)
-        rename_map = {"해당년": Col.YEAR, "해당월": Col.MONTH}
-        df = df.rename(columns=rename_map)
-
-        # 1. 필수 컬럼 확인
-        required_cols = [Col.NAME, Col.YEAR, Col.MONTH, Col.CODE1, Col.CODE2, Col.RAW_DEPOSIT]
-        missing = [c for c in required_cols if c not in df.columns]
-        if missing:
-            st.session_state["error_msg"] = f"누락된 열: {missing}"
-            return
-        
-        df = normalize_names(df)
-
-        # 2. 숫자형 변환
-        numeric_columns = [Col.YEAR, Col.MONTH, Col.CODE1, Col.CODE2, Col.RAW_DEPOSIT]
-        for col in numeric_columns:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-                df[col] = df[col].round().astype("Int64")
-
-        # 3. 졸업생 명단 필터링
-        try:
-            def to_csv_url(url: str) -> str:
-                if "export?format=csv" in url: return url
-                if "/edit" in url: return url.split("/edit")[0] + "/export?format=csv"
-                return url
-
-            csv_url = to_csv_url(gsheet_url)
-            df_sheet = pd.read_csv(csv_url)
-
-            df_sheet = normalize_names(df_sheet)
-            if "구분" not in df_sheet.columns or "이름" not in df_sheet.columns:
-                st.session_state["error_msg"] = "Google Sheet에 '이름'과 '구분' 열이 필요합니다."
-                return
-            
-            graduation_names = list(set(df_sheet[df_sheet["구분"].str.strip() == "졸업생"]["이름"].tolist()))
-            
-            # 면제기금 매핑 생성 (예: {"김장호": ["협력", "복지"]})
-            exemption_map: dict[str, list[str]] = {}
-            if "면제기금" in df_sheet.columns:
-                for _, row in df_sheet[df_sheet["구분"].str.strip() == "졸업생"].iterrows():
-                    name = str(row["이름"]).strip()
-                    exempt_str = str(row.get("면제기금", "")).strip()
-                    if name and exempt_str:
-                        # 쉼표로 구분된 기금명 파싱
-                        exempt_funds = [f.strip() for f in exempt_str.split(",") if f.strip()]
-                        if exempt_funds:
-                            exemption_map[name] = exempt_funds
-            
-            df = df[df["이름"].isin(graduation_names)].copy()
-            
-            total_grad_count = len(df) # 졸업생 전체 납부 건수 (년도 필터링 전)
-
-            if df.empty:
-                st.session_state["error_msg"] = "졸업생 명단 필터링 후 남은 데이터가 없습니다."
-                return
-        except Exception as e:
-            st.session_state["error_msg"] = f"졸업생명단 처리 오류: {e}"
-            return
-
-        # 4. 최초납부월 추출 (전체 데이터 대상)
-        df_first_payment = extract_first_payment_month(cast(pd.DataFrame, df))
-
-        # 5. 년도 필터 적용
-        if Col.YEAR in df.columns:
-            mask = (df[Col.YEAR] >= start_year) & (df[Col.YEAR] <= end_year)
-            mask = mask.fillna(False) 
-            df_view: pd.DataFrame = cast(pd.DataFrame, df[mask].copy())
-            
-            period_count = len(df_view) 
-
-            if df_view.empty:
-                st.session_state["error_msg"] = f"선택한 년도 범위({start_year} ~ {end_year})에 해당하는 데이터가 없습니다."
-                return
-        else:
-            df_view = cast(pd.DataFrame, df.copy())
-            period_count = len(df_view)
-
-        # 6. 오류 검출
-        df_errors = detect_errors(df_view)
-
-        # 7. 미납월 생성 및 병합
-        filter_arg = df_first_payment if use_first_payment_filter else None
-        
-        # 파일명에서 기준 년월 추출
-        ref_date = extract_date_from_filename(main_file.name)
-        ref_year = ref_date[0] if ref_date else end_year
-        ref_month = ref_date[1] if ref_date else 12
-        
-        df_missed, filtered_count = generate_missed_months(
-            df_view, 
-            filter_arg, 
-            filename=main_file.name,
-            graduation_names=graduation_names,
-            end_year=ref_year,
-            end_month=ref_month,
-            exemption_map=exemption_map
+    with ui.element("div").classes("w-full min-h-[calc(100vh-2rem)] flex flex-col items-center"):
+        main = ui.column().classes(
+            "w-full max-w-[42rem] mx-auto my-auto p-6 md:p-10 "
+            "bg-white rounded-[2rem] shadow-sm hover:shadow-md transition-shadow"
         )
 
-        if not df_missed.empty:
-            if df_errors.empty:
-                df_errors = df_missed
-            else:
-                for col in [Col.DEPOSIT, Col.STANDARD, Col.DIFF]:
-                    if col in df_errors.columns:
-                        df_errors[col] = cast(pd.Series, pd.to_numeric(df_errors[col], errors="coerce")).astype(float)
-                    if col in df_missed.columns:
-                        df_missed[col] = cast(pd.Series, pd.to_numeric(df_missed[col], errors="coerce")).astype(float)
-                
-                for col in [Col.CODE]:
-                    if col in df_errors.columns:
-                        df_errors[col] = df_errors[col].astype(str)
-                    if col in df_missed.columns:
-                        df_missed[col] = df_missed[col].astype(str)
+    if is_result:
+        with main:
+            build_result_view_from_storage()
+        return
 
-                df_missed_aligned = df_missed.reindex(columns=df_errors.columns)
-                df_errors = pd.concat([df_errors, df_missed_aligned], ignore_index=True)
-        
-        if not df_errors.empty:
-            df_errors = df_errors.sort_values([Col.NAME, Col.YEAR, Col.MONTH, Col.CODE]).reset_index(drop=True)
-            df_errors.index = df_errors.index + 1
+    file_state = {"bytes": None, "name": None}
+    settings = {
+        "gsheet_url": DEFAULT_GSHEET_URL,
+        "start_year": 2013,
+        "end_year": datetime.now().year,
+    }
 
-        # [최적화] 캐시 준비: 스피너가 활성 상태일 때 엑셀 바이트를 미리 생성함.
-        # 이렇게 하면 다운로드 버튼이 렌더링될 때 지연 시간 없이 즉시 다운로드 가능함.
-        base_name = getattr(main_file, "name", "result.xlsx")
-        download_name = base_name.replace(".xlsx", "_오류검출.xlsx")
-        
-        # 이름별 오류 요약 생성 (엑셀용) - 캐시 전에 먼저 생성
-        df_summary = pd.DataFrame()
-        if not df_errors.empty:
-            summary_by_name = cast(
-                pd.DataFrame,
-                df_errors.groupby([Col.NAME, Col.STATUS])
-                .size()
-                .unstack(fill_value=0)
-                .astype(int)
-                .reset_index()
+    with main:
+        ui.label("인별납부내역 자동화").classes(
+            "text-3xl font-bold text-center text-slate-800 mb-10 w-full"
+        )
+
+        upload_section = ui.column().classes("w-full mb-4")
+        with upload_section:
+            render_upload_content(file_state, upload_section)
+
+        render_gsheet_card(settings)
+        render_period_card(settings)
+
+        async def on_analyze():
+            await analyze(file_state, settings, main)
+
+        ui.button(
+            "분석 실행",
+            on_click=on_analyze,
+            icon="play_arrow",
+        ).props("size=lg unelevated").style(
+            "background-color: #3b41e3 !important; color: white; font-size: 14px; border-radius: 8px; padding-top: 1rem; padding-bottom: 1rem;"
+        ).classes("w-full mt-4")
+
+
+def render_upload_content(file_state, parent):
+    if file_state["bytes"]:
+        size_kb = len(file_state["bytes"]) / 1024
+        size_str = f"{size_kb:,.1f} KB" if size_kb < 1024 else f"{size_kb / 1024:,.1f} MB"
+        card = ui.element("div").classes(
+            "w-full border-2 border-solid border-green-200 bg-green-50 "
+            "rounded-xl p-5 flex flex-col items-center justify-center gap-3 "
+            "cursor-pointer hover:border-blue-400 hover:bg-green-100/60 transition-all"
+        )
+        with card:
+            ui.icon("check_circle", size="32px", color="green")
+            with ui.column().classes("items-center gap-0"):
+                ui.label(file_state["name"]).classes("text-slate-800 font-semibold text-sm")
+                ui.label(size_str).classes("text-slate-400 text-xs")
+            ui.label("다시 업로드").classes("text-slate-500 text-xs underline")
+    else:
+        card = ui.element("div").classes(
+            "w-full border-2 border-dashed border-slate-200 bg-slate-50/50 rounded-xl "
+            "p-10 flex flex-col items-center justify-center gap-4 cursor-pointer "
+            "hover:border-blue-400 hover:bg-blue-50 transition-all"
+        )
+        with card:
+            ui.icon("cloud_upload", size="48px").classes("text-slate-400")
+            ui.label("클릭하여 업로드 (.xlsx)").classes("text-slate-500 text-sm")
+
+    uploader = ui.upload(
+        auto_upload=True,
+        on_upload=lambda e: on_file_uploaded(e, file_state, parent),
+    ).props('accept=".xlsx"').classes("hidden")
+
+    card.on("click", lambda: uploader.run_method("pickFiles"))
+
+
+async def on_file_uploaded(e: UploadEventArguments, file_state, parent):
+    file_state["bytes"] = await e.file.read()
+    file_state["name"] = e.file.name
+    if parent:
+        parent.clear()
+        with parent:
+            render_upload_content(file_state, parent)
+
+
+def render_gsheet_card(settings):
+    with ui.card().classes(
+        "w-full p-5 flex items-center cursor-pointer hover:scale-[1.01] transition-transform mb-4"
+    ) as card:
+        with ui.element("div").classes("bg-slate-50 p-3 rounded-lg mr-4 shrink-0"):
+            ui.icon("table_chart", size="24px").classes("text-slate-600")
+        with ui.column().classes("flex-1 gap-0"):
+            ui.label("졸업생 명단").classes("text-slate-800 font-semibold text-[15px]")
+            sheet_subtitle = ui.label("URL을 입력하세요").classes("text-slate-500 text-sm")
+
+    def fetch_title():
+        title = get_google_sheets_title(settings["gsheet_url"])
+        sheet_subtitle.set_text(title if title else "연결 실패")
+
+    fetch_title()
+
+    async def open_dialog():
+        with ui.dialog().classes("rounded-xl") as dialog:
+            with ui.card().classes("min-w-[28rem] p-6"):
+                ui.label("졸업생 명단 설정").classes("text-lg font-semibold mb-4")
+                url_input = ui.input("Google Sheets URL", value=settings["gsheet_url"]).classes("w-full")
+                with ui.row().classes("w-full justify-end gap-2 mt-4"):
+                    ui.button("취소", on_click=dialog.close).props("outline")
+                    ui.button("저장", on_click=lambda: save()).props("unelevated")
+
+        def save():
+            settings["gsheet_url"] = url_input.value
+            sheet_subtitle.set_text("연결 중...")
+            dialog.close()
+            fetch_title()
+
+        dialog.open()
+
+    card.on("click", open_dialog)
+
+
+def render_period_card(settings):
+    cur_year = datetime.now().year
+    with ui.card().classes(
+        "w-full p-5 flex items-center cursor-pointer hover:scale-[1.01] transition-transform"
+    ) as card:
+        with ui.element("div").classes("bg-slate-50 p-3 rounded-lg mr-4 shrink-0"):
+            ui.icon("event", size="24px").classes("text-slate-600")
+        with ui.column().classes("flex-1 gap-0"):
+            ui.label("분석 기간").classes("text-slate-800 font-semibold text-[15px]")
+            period_subtitle = ui.label(
+                f"{settings['start_year']}년부터 {settings['end_year']}년까지"
+            ).classes("text-slate-500 text-sm")
+
+    async def open_dialog():
+        with ui.dialog().classes("rounded-xl") as dialog:
+            with ui.card().classes("min-w-[28rem] p-6"):
+                ui.label("분석 기간 설정").classes("text-lg font-semibold mb-4")
+                with ui.row().classes("w-full gap-4"):
+                    start_input = ui.number(
+                        "시작 년도",
+                        value=settings["start_year"],
+                        min=2000,
+                        max=cur_year,
+                        step=1,
+                    )
+                    end_input = ui.number(
+                        "종료 년도",
+                        value=settings["end_year"],
+                        min=2000,
+                        max=cur_year + 10,
+                        step=1,
+                    )
+                with ui.row().classes("w-full justify-end gap-2 mt-4"):
+                    ui.button("취소", on_click=dialog.close).props("outline")
+                    ui.button("저장", on_click=lambda: save()).props("unelevated")
+
+        def save():
+            settings["start_year"] = int(start_input.value)
+            settings["end_year"] = int(end_input.value)
+            period_subtitle.set_text(
+                f"{settings['start_year']}년부터 {settings['end_year']}년까지"
             )
-            
-            for status in [Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]:
-                if status not in summary_by_name.columns:
-                    summary_by_name[status] = 0
-            
-            summary_by_name = cast(pd.DataFrame, summary_by_name[[Col.NAME, Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]])
-            
-            summary_by_name["합계"] = summary_by_name[Status.UNPAID] + summary_by_name[Status.INSUFFICIENT] + summary_by_name[Status.EXCESS]
-            
-            summary_by_name = cast(pd.DataFrame, summary_by_name[summary_by_name["합계"] > 0])
-            
-            summary_by_name = cast(pd.DataFrame, summary_by_name.sort_values("합계", ascending=False)).reset_index(drop=True)
-            summary_by_name.index = summary_by_name.index + 1
-            
-            # 컬럼명 변경
-            df_summary = summary_by_name.rename(columns={
+            dialog.close()
+
+        dialog.open()
+
+    card.on("click", open_dialog)
+
+
+async def analyze(file_state, settings, main):
+    if not file_state["bytes"] or not settings["gsheet_url"]:
+        ui.notify("원본 엑셀과 Google Sheets URL을 입력하세요.", type="warning")
+        return
+
+    main.clear()
+    with main:
+        with ui.column().classes("w-full p-12 flex flex-col items-center"):
+            ui.spinner("dots").classes("mb-4")
+            ui.label("데이터 처리 중입니다...").classes("text-slate-500")
+
+    try:
+        df_errors, df_first, df_summary, dl_name, summary = await run.io_bound(
+            process_data,
+            file_state["bytes"],
+            file_state["name"],
+            settings["gsheet_url"],
+            settings["start_year"],
+            settings["end_year"],
+        )
+    except Exception as e:
+        import traceback
+
+        try:
+            main.clear()
+            with main:
+                ui.label(f"오류 발생: {e}").classes("text-red-500")
+                with ui.expansion("기술적 상세 정보"):
+                    ui.label(traceback.format_exc()).classes(
+                        "text-xs text-slate-400 font-mono whitespace-pre-wrap"
+                    )
+        except RuntimeError:
+            pass
+        return
+
+    app.storage.user["result"] = {
+        "df_errors": df_errors.to_dict("records"),
+        "df_first": df_first.to_dict("records"),
+        "df_summary": df_summary.to_dict("records") if not df_summary.empty else [],
+        "dl_name": dl_name,
+        "summary": summary,
+    }
+    app.storage.user["result_ready"] = True
+
+    try:
+        main.clear()
+        with main:
+            build_result_view_from_storage()
+    except RuntimeError:
+        pass
+
+
+def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
+    start_time = time.time()
+
+    try:
+        df = pd.read_excel(BytesIO(file_bytes), sheet_name="raw", header=1)
+    except Exception as e:
+        raise ValueError(f"원본 엑셀 읽기 오류: {e}")
+
+    rename_map = {"해당년": Col.YEAR, "해당월": Col.MONTH}
+    df = df.rename(columns=rename_map)
+
+    required_cols = [Col.NAME, Col.YEAR, Col.MONTH, Col.CODE1, Col.CODE2, Col.RAW_DEPOSIT]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"누락된 열: {missing}")
+
+    df = normalize_names(df)
+
+    numeric_columns = [Col.YEAR, Col.MONTH, Col.CODE1, Col.CODE2, Col.RAW_DEPOSIT]
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = df[col].round().astype("Int64")
+
+    def to_csv_url(url: str) -> str:
+        if "export?format=csv" in url:
+            return url
+        if "/edit" in url:
+            return url.split("/edit")[0] + "/export?format=csv"
+        return url
+
+    csv_url = to_csv_url(gsheet_url)
+    df_sheet = pd.read_csv(csv_url)
+    df_sheet = normalize_names(df_sheet)
+
+    if "구분" not in df_sheet.columns or "이름" not in df_sheet.columns:
+        raise ValueError("Google Sheet에 '이름'과 '구분' 열이 필요합니다.")
+
+    graduation_names = list(
+        set(df_sheet[df_sheet["구분"].str.strip() == "졸업생"]["이름"].tolist())
+    )
+
+    exemption_map: dict[str, list[str]] = {}
+    if "면제기금" in df_sheet.columns:
+        for _, row in df_sheet[df_sheet["구분"].str.strip() == "졸업생"].iterrows():
+            name = str(row["이름"]).strip()
+            exempt_str = str(row.get("면제기금", "")).strip()
+            if name and exempt_str:
+                exempt_funds = [f.strip() for f in exempt_str.split(",") if f.strip()]
+                if exempt_funds:
+                    exemption_map[name] = exempt_funds
+
+    df = df[df["이름"].isin(graduation_names)].copy()
+    total_grad_count = len(df)
+
+    if df.empty:
+        raise ValueError("졸업생 명단 필터링 후 남은 데이터가 없습니다.")
+
+    df_first_payment = extract_first_payment_month(cast(pd.DataFrame, df))
+
+    if Col.YEAR in df.columns:
+        mask = (df[Col.YEAR] >= start_year) & (df[Col.YEAR] <= end_year)
+        mask = mask.fillna(False)
+        df_view: pd.DataFrame = cast(pd.DataFrame, df[mask].copy())
+        period_count = len(df_view)
+        if df_view.empty:
+            raise ValueError(
+                f"선택한 년도 범위({start_year} ~ {end_year})에 해당하는 데이터가 없습니다."
+            )
+    else:
+        df_view = cast(pd.DataFrame, df.copy())
+        period_count = len(df_view)
+
+    df_errors = detect_errors(df_view)
+
+    ref_date = extract_date_from_filename(file_name)
+    ref_year = ref_date[0] if ref_date else end_year
+    ref_month = ref_date[1] if ref_date else 12
+
+    df_missed, filtered_count = generate_missed_months(
+        df_view,
+        df_first_payment,
+        filename=file_name,
+        graduation_names=graduation_names,
+        end_year=ref_year,
+        end_month=ref_month,
+        exemption_map=exemption_map,
+    )
+
+    if not df_missed.empty:
+        if df_errors.empty:
+            df_errors = df_missed
+        else:
+            for col in [Col.DEPOSIT, Col.STANDARD, Col.DIFF]:
+                if col in df_errors.columns:
+                    df_errors[col] = cast(
+                        pd.Series, pd.to_numeric(df_errors[col], errors="coerce")
+                    ).astype(float)
+                if col in df_missed.columns:
+                    df_missed[col] = cast(
+                        pd.Series, pd.to_numeric(df_missed[col], errors="coerce")
+                    ).astype(float)
+            for col in [Col.CODE]:
+                if col in df_errors.columns:
+                    df_errors[col] = df_errors[col].astype(str)
+                if col in df_missed.columns:
+                    df_missed[col] = df_missed[col].astype(str)
+
+            df_missed_aligned = df_missed.reindex(columns=df_errors.columns)
+            df_errors = pd.concat([df_errors, df_missed_aligned], ignore_index=True)
+
+    if not df_errors.empty:
+        df_errors = df_errors.sort_values(
+            [Col.NAME, Col.YEAR, Col.MONTH, Col.CODE]
+        ).reset_index(drop=True)
+        df_errors.index = df_errors.index + 1
+
+    download_name = file_name.replace(".xlsx", "_오류검출.xlsx")
+
+    df_summary = pd.DataFrame()
+    if not df_errors.empty:
+        summary_by_name = cast(
+            pd.DataFrame,
+            df_errors.groupby([Col.NAME, Col.STATUS])
+            .size()
+            .unstack(fill_value=0)
+            .astype(int)
+            .reset_index(),
+        )
+        for status in [Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]:
+            if status not in summary_by_name.columns:
+                summary_by_name[status] = 0
+        summary_by_name = cast(
+            pd.DataFrame,
+            summary_by_name[
+                [Col.NAME, Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]
+            ],
+        )
+        summary_by_name["합계"] = (
+            summary_by_name[Status.UNPAID]
+            + summary_by_name[Status.INSUFFICIENT]
+            + summary_by_name[Status.EXCESS]
+        )
+        summary_by_name = cast(
+            pd.DataFrame, summary_by_name[summary_by_name["합계"] > 0]
+        )
+        summary_by_name = cast(
+            pd.DataFrame,
+            summary_by_name.sort_values("합계", ascending=False),
+        ).reset_index(drop=True)
+        summary_by_name.index = summary_by_name.index + 1
+        df_summary = summary_by_name.rename(
+            columns={
                 Col.NAME: "이름",
                 Status.UNPAID: "미납",
                 Status.INSUFFICIENT: "부족",
-                Status.EXCESS: "초과"
-            })
-        
-        _ = to_excel_bytes(df_errors, df_first_payment, download_name, df_summary)
-
-        st.session_state["df_summary"] = df_summary
-
-        # 결과 저장
-        st.session_state["df_errors"] = df_errors
-        st.session_state["df_first_payment"] = df_first_payment
-        st.session_state["download_name"] = download_name
-        
-        # [New] 상세 결과 요약 정보 계산
-        counts = {Status.UNPAID: 0, Status.INSUFFICIENT: 0, Status.EXCESS: 0}
-        if not df_errors.empty:
-            type_counts = df_errors[Col.STATUS].value_counts().to_dict()
-            for k in counts.keys():
-                counts[k] = int(type_counts.get(k, 0))
-        
-        st.session_state["result_summary"] = {
-            "counts": counts,
-            "filtered_count": filtered_count,
-            "total_grad_count": total_grad_count,
-            "period_count": period_count,
-            "duration": time.time() - start_time,
-            "period": f"{start_year}년 ~ {end_year}년"
-        }
-    except Exception as e:
-        import traceback
-        st.session_state["error_msg"] = f"작업 중 오류 발생: {e}"
-        st.session_state["error_detail"] = traceback.format_exc()
-
-# 메인 로직 실행
-if st.session_state.get("processing"):
-    st.divider()
-    st.subheader("⏳ 처리 실행 중...")
-    
-    with st.spinner("데이터 처리 중입니다..."):
-        # 캡처된 파라미터 사용
-        params = st.session_state.get("run_params", {})
-        run_processing(
-            params.get("main_file"), 
-            params.get("gsheet_url"), 
-            params.get("sheet_name"), 
-            params.get("header_row"), 
-            params.get("start_year"), 
-            params.get("end_year"), 
-            params.get("use_filter")
-        )
-    
-    st.session_state["processing"] = False
-    st.session_state["settings_expanded"] = False
-    st.rerun()
-
-# 에러 메시지 표시
-if "error_msg" in st.session_state:
-    st.error(st.session_state["error_msg"])
-    if "error_detail" in st.session_state:
-        with st.expander("🛠️ 기술적 상세 정보 (개발자용)"):
-            st.code(st.session_state["error_detail"])
-
-# 성공 결과 렌더링 (에러 블록과 분리)
-if "df_errors" in st.session_state:
-    # 결과 영역 스타일
-    st.markdown("""
-        <style>
-            /* 분석 결과 영역 상단 여백 감소 */
-            [data-testid="stVerticalBlock"] > [style*="flex-direction: column"] > [data-testid="stVerticalBlock"]:has(h2) {
-                padding-top: 0px !important;
-                margin-top: 0px !important;
+                Status.EXCESS: "초과",
             }
-            
-            /* 결과 헤더 부분 여백 감소 */
-            div[data-testid="stMarkdownContainer"] h2 {
-                margin-top: 0px !important;
-                padding-top: 8px !important;
-            }
-        </style>
-    """, unsafe_allow_html=True)
-    # 0. 결과 요약 메시지 표시 (세션 스테이트에서 불러옴)
-    summary = st.session_state.get("result_summary", {})
-    if summary:
-        counts = summary.get("counts", {})
-        c_miss = counts.get(Status.UNPAID, 0)
-        c_under = counts.get(Status.INSUFFICIENT, 0)
-        c_over = counts.get(Status.EXCESS, 0)
-        c_filt = summary.get("filtered_count", 0)
-        
-        total_errors = sum(counts.values())
-        duration = summary.get("duration", 0)
-        period = summary.get("period", "-")
-        total_grad = summary.get("total_grad_count", 0)
-        period_count = summary.get("period_count", 0)
-
-    # 상단 헤더 및 다운로드 버튼
-    header_col, action_col = st.columns([1, 0.5])
-    with header_col:
-        st.subheader("분석 결과")
-    with action_col:
-        dl_name = st.session_state.get("download_name", "result_오류검출.xlsx")
-        data, out_name = build_excel_bytes(
-            st.session_state.get("df_first_payment", pd.DataFrame()),
-            st.session_state["df_errors"],
-            dl_name,
-            st.session_state.get("df_summary", pd.DataFrame()),
         )
-        
-        b_dl, b_new = st.columns([1.2, 1], gap="small")
-        with b_dl:
-            st.download_button(
-                label="결과 엑셀 다운로드",
-                data=data,
-                file_name=out_name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
-        with b_new:
-            if st.button("새로 분석하기", use_container_width=True):
-                reset_app()
-    
-    st.markdown(f"""
-        <div class="kpi-container">
-            <div class="kpi-card">
-                <p class="kpi-label">분석 대상</p>
-                <div class="kpi-value"><span style="font-size: 36px;">{period_count:,}</span></div>
-            </div>
-            <div class="kpi-card kpi-card-unpaid">
-                <p class="kpi-label">미납</p>
-                <div class="kpi-value"><span style="font-size: 36px;">{c_miss:,}</span></div>
-            </div>
-            <div class="kpi-card kpi-card-insufficient">
-                <p class="kpi-label">부족</p>
-                <div class="kpi-value"><span style="font-size: 36px;">{c_under:,}</span></div>
-            </div>
-            <div class="kpi-card kpi-card-excess">
-                <p class="kpi-label">초과</p>
-                <div class="kpi-value"><span style="font-size: 36px;">{c_over:,}</span></div>
-            </div>
-            <div class="kpi-card kpi-card-total">
-                <p class="kpi-label">오류 합계</p>
-                <div class="kpi-value"><span style="font-size: 36px;">{total_errors:,}</span></div>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    messages = []
-    messages.append(f"✅ 처리 완료 (소요 시간: {duration:.2f}초)")
+
+    counts = {Status.UNPAID: 0, Status.INSUFFICIENT: 0, Status.EXCESS: 0}
+    if not df_errors.empty:
+        type_counts = df_errors[Col.STATUS].value_counts().to_dict()
+        for k in counts.keys():
+            counts[k] = int(type_counts.get(k, 0))
+
+    summary_info = {
+        "counts": counts,
+        "filtered_count": filtered_count,
+        "total_grad_count": total_grad_count,
+        "period_count": period_count,
+        "duration": time.time() - start_time,
+        "period": f"{start_year}년 ~ {end_year}년",
+    }
+
+    return df_errors, df_first_payment, df_summary, download_name, summary_info
+
+
+def build_result_view_from_storage():
+    r = app.storage.user["result"]
+    df_errors = pd.DataFrame(r["df_errors"])
+    df_first = pd.DataFrame(r["df_first"])
+    df_summary = pd.DataFrame(r["df_summary"]) if r["df_summary"] else pd.DataFrame()
+    build_result_view(df_errors, df_first, df_summary, r["dl_name"], r["summary"])
+
+
+def build_result_view(df_errors, df_first, df_summary, dl_name, summary):
+    counts = summary["counts"]
+    c_miss = counts.get(Status.UNPAID, 0)
+    c_under = counts.get(Status.INSUFFICIENT, 0)
+    c_over = counts.get(Status.EXCESS, 0)
+    total_errors = sum(counts.values())
+    duration = summary["duration"]
+    period_count = summary["period_count"]
+    c_filt = summary["filtered_count"]
+
+    ui.label("분석 결과").classes("text-2xl font-bold text-slate-800 text-center w-full mb-4")
+
+    with ui.column().classes("w-full items-center gap-3 mb-8"):
+        excel_data, _ = to_excel_bytes(df_first, df_errors, dl_name, df_summary)
+        ui.button(
+            "결과 엑셀 다운로드",
+            on_click=lambda: ui.download(
+                excel_data,
+                dl_name,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+            icon="download",
+        ).props("size=md unelevated").style("background-color: #3b41e3 !important; color: white; font-size: 14px; border-radius: 8px;").classes("w-full max-w-xs")
+        async def reset():
+            app.storage.user["result_ready"] = False
+            ui.navigate.to("/")
+
+        ui.button(
+            "새로 분석하기",
+            on_click=reset,
+            icon="refresh",
+        ).props("outline size=md color=grey-7").style("border-radius: 8px; font-size: 14px;").classes("w-full max-w-xs")
+
+    kpi_configs = [
+        ("분석 대상", period_count, "bg-slate-100", "bg-slate-300", "text-slate-500", "text-slate-800"),
+        ("미납", c_miss, "bg-red-100", "bg-red-500", "text-red-800", "text-red-800"),
+        ("부족", c_under, "bg-indigo-100", "bg-indigo-500", "text-indigo-800", "text-indigo-800"),
+        ("초과", c_over, "bg-pink-100", "bg-pink-500", "text-pink-800", "text-pink-800"),
+        ("오류 합계", total_errors, "bg-violet-100", "bg-[#232936]", "text-violet-700", "text-violet-800"),
+    ]
+
+    with ui.row().classes("w-full gap-3 mb-8"):
+        for label, value, bg, bar, label_color, value_color in kpi_configs:
+            with ui.element("div").classes(
+                f"flex-1 rounded-xl py-5 px-3 text-center relative overflow-hidden shadow-sm {bg}"
+            ):
+                ui.element("div").classes(f"absolute top-0 left-0 right-0 h-1 {bar}")
+                ui.label(label).classes(f"text-sm font-semibold {label_color} tracking-wide mb-2")
+                ui.label(f"{value:,}").classes(f"text-3xl font-medium {value_color} tracking-tight")
+
+    messages = [f"처리 시간: {duration:.2f}초"]
     if c_filt > 0:
-        messages.append(f"💡 {c_filt}건의 미납 내역이 '최초 납부월 이전'이라 제외되었습니다.")
+        messages.append(f"{c_filt}건의 미납 내역이 '최초 납부월 이전'이라 제외되었습니다.")
     elif total_errors == 0:
-        messages.append("💡 검출된 오류나 미납 내역이 없습니다.")
-    
-    st.markdown(f"""
-        <div class="result-message">
-            {'<br>'.join(messages)}
-        </div>
-    """, unsafe_allow_html=True)
+        messages.append("검출된 오류나 미납 내역이 없습니다.")
+
+    with ui.row().classes("w-full items-center gap-2 text-sm text-slate-600"):
+        ui.icon("info", size="sm").classes("text-slate-400")
+        ui.label("\n".join(messages)).classes("leading-relaxed")
 
 
+
+
+ui.run(title="인별납부내역 오류검출", port=8090, reload=True, storage_secret="taxcheck-local-dev")

@@ -4,7 +4,7 @@
 
 **프로젝트명**: 인별납부내역자동화 (TaxCheck)
 
-**목적**: 졸업생 기금(운영기금/협력기금/복지기금) 납부 내역을 분석하여 오류(미납, 부족, 초과)를 자동 검출하는 Streamlit 웹 애플리케이션
+**목적**: 졸업생 기금(운영기금/협력기금/복지기금) 납부 내역을 분석하여 오류(미납, 부족, 초과)를 자동 검출하는 NiceGUI 웹 애플리케이션
 
 **타겟 사용자**: 기금 관리 담당자, 행정 실무자
 
@@ -12,7 +12,7 @@
 
 | 계층 | 기술 |
 |------|------|
-| Frontend | Streamlit 1.34+, st-aggrid |
+| Frontend | NiceUI 2.0+ |
 | Backend | Python 3.12 |
 | Data Processing | Pandas 2.0+, NumPy 1.26+ |
 | Excel | openpyxl 3.1+ |
@@ -27,8 +27,8 @@ source venv/bin/activate
 # 의존성 설치
 pip install -r requirements.txt
 
-# Streamlit 앱 실행
-streamlit run app.py
+# NiceGUI 앱 실행
+python app.py
 
 # 테스트 실행
 python -m unittest test_suite.py
@@ -42,7 +42,7 @@ python -m unittest test_suite.py
 
 **계층 구조**: UI 계층(app.py)과 비즈니스 로직 계층(data_processor.py)이 분리된 단일 모듈 구조. 상수는 constants.py에서 중앙 관리.
 
-**상태 관리**: Streamlit 세션 상태(st.session_state)로 파일 업로드, 처리 결과, UI 상태를 관리.
+**상태 관리**: NiceGUI의 클라이언트-서버 아키텍처에서 app-level 상태와 세션별 상태로 관리.
 
 **데이터 처리 패턴**: 모든 데이터는 Pandas DataFrame으로 메모리에서 처리되며, DB는 사용하지 않음.
 
@@ -69,7 +69,7 @@ python -m unittest test_suite.py
 
 | 파일 | 역할 |
 |------|------|
-| `app.py` | Streamlit UI, 세션 상태 관리 |
+| `app.py` | NiceGUI UI, 세션 상태 관리 |
 | `data_processor.py` | 오류 검출, 미납 생성 등 비즈니스 로직 |
 | `constants.py` | 컬럼명, 상태값, 기금 코드 상수 |
 

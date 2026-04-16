@@ -23,7 +23,6 @@ backup/
 # Metadata and Configuration
 !requirements.txt
 !*.md
-!.streamlit/
 
 # Python virtual environment
 venv/
@@ -35,7 +34,9 @@ env/
 __pycache__/
 *.tmp
 ~$*
-*.txt
-!requirements.txt
+
+# Framework runtime
+.nicegui/
+.playwright-mcp/
 
 

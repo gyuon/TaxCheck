@@ -4,7 +4,7 @@
 
 ## 개요
 
-Streamlit 기반 웹 애플리케이션으로, 졸업생의 기금 납부 내역을 분석하여 다음 오류를 자동으로 검출합니다:
+NiceGUI 기반 웹 애플리케이션으로, 졸업생의 기금 납부 내역을 분석하여 다음 오류를 자동으로 검출합니다:
 
 - **미납**: 해당 월에 납부 기록이 없는 경우
 - **부족**: 기준금액보다 적게 납부한 경우
@@ -13,7 +13,7 @@ Streamlit 기반 웹 애플리케이션으로, 졸업생의 기금 납부 내역
 ## 기술 스택
 
 - Python 3.12
-- Streamlit 1.34+
+- NiceGUI 2.0+
 - Pandas 2.0+
 - openpyxl 3.1+
 - NumPy 1.26+
@@ -44,10 +44,10 @@ pip install -r TaxCheck/requirements.txt
 
 ```bash
 cd TaxCheck
-streamlit run app.py
+python app.py
 ```
 
-브라우저에서 `http://localhost:8501` 접속
+브라우저에서 `http://localhost:8090` 접속
 
 ## 환경 변수
 
