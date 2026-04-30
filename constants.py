@@ -16,6 +16,8 @@ class Col:
     FORMULA = "기준금액 산출법"
     DIFF = "차액"
     REMARKS = "비고"
+    PREV_MONTH_AMT = "전월납부금액"
+    NEXT_MONTH_AMT = "익월납부금액"
     
     # 원본 데이터 컬럼 (입력용)
     CODE1 = "코드1"
@@ -59,5 +61,6 @@ class FundCode:
 # 결과 시트의 컬럼 순서
 RESULT_COLUMNS = [
     Col.NAME, Col.YEAR, Col.MONTH, Col.FUND_NAME, Col.CODE,
-    Col.DEPOSIT, Col.STANDARD, Col.FORMULA, Col.STATUS, Col.DIFF, Col.REMARKS
+    Col.STATUS, Col.DIFF, Col.DEPOSIT, Col.STANDARD, Col.FORMULA,
+    Col.PREV_MONTH_AMT, Col.NEXT_MONTH_AMT, Col.REMARKS
 ]

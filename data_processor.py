@@ -169,7 +169,7 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
             ratios = pd.Series(1.0, index=work_df.index)
             std = op_deposit
 
-        formula_series = "운영기금 총액 × " + (ratios * 100).astype(int).astype(str) + "%"
+        formula_series = "운영기금 총액(" + op_deposit.apply(lambda x: f"{int(x):,}").astype(str) + ") × " + (ratios * 100).astype(int).astype(str) + "%"
 
         # 부족 검사
         insufficient_mask = ((config["deposit"] < std) & config["has_mask"]).fillna(False)
@@ -204,6 +204,8 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
         
     final_df = pd.concat(results).reset_index()
     final_df[Col.REMARKS] = ""
+    final_df[Col.PREV_MONTH_AMT] = None
+    final_df[Col.NEXT_MONTH_AMT] = None
     
     # 컬럼 정리
     final_df = final_df[RESULT_COLUMNS]
@@ -224,6 +226,8 @@ def generate_missed_months(
     df_first: pd.DataFrame | None = None, 
     filename: str | None = None,
     graduation_names: list[str] | None = None,
+    start_year: int | None = None,
+    start_month: int | None = None,
     end_year: int | None = None,
     end_month: int | None = None,
     exemption_map: dict[str, list[str]] | None = None
@@ -262,24 +266,29 @@ def generate_missed_months(
     
     # [신규] graduation_names, end_year, end_month가 제공되면 전체 기간 생성
     if graduation_names and end_year and end_month and df_first is not None:
-        # 졸업생별 최초납부월 매핑
         first_map = df_first.set_index(Col.NAME)[[Col.YEAR, Col.MONTH]]
         first_map["serial"] = first_map[Col.YEAR] * 12 + first_map[Col.MONTH]
         first_serial_dict = first_map["serial"].to_dict()
         
         end_serial = end_year * 12 + end_month
         
-        # 각 졸업생별로 (최초납부월 ~ 기준년월) 기간 생성
+        analysis_start_serial = None
+        if start_year is not None:
+            sm = start_month if start_month else 1
+            analysis_start_serial = start_year * 12 + sm
+        
         all_periods = []
         for name in graduation_names:
             if name in first_serial_dict:
                 start_serial = first_serial_dict[name]
             else:
-                # 최초납부월 정보가 없으면 원본 데이터의 최소 월 사용
                 name_data = target_df[target_df[Col.NAME] == name]
                 if name_data.empty:
-                    continue  # 데이터가 전혀 없으면 건너뜀
+                    continue
                 start_serial = int(name_data[Col.YEAR].min() * 12 + name_data[Col.MONTH].min())
+            
+            if analysis_start_serial is not None:
+                start_serial = max(start_serial, analysis_start_serial)
             
             for serial in range(start_serial, end_serial + 1):
                 year = serial // 12
@@ -383,8 +392,28 @@ def generate_missed_months(
 
     missed[Col.DEPOSIT] = 0
     missed[Col.STATUS] = Status.UNPAID
-    missed[Col.STANDARD] = pd.NA
-    missed[Col.FORMULA] = ""
+
+    op_monthly = valid_rows[valid_rows["canonical"] == 1].groupby(
+        [Col.NAME, Col.YEAR, Col.MONTH]
+    )[Col.RAW_DEPOSIT].sum()
+
+    def _calc_standard(row):
+        key = (row[Col.NAME], row[Col.YEAR], row[Col.MONTH])
+        canonical = row["canonical"]
+        if canonical == 1:
+            return pd.NA, ""
+        op_total = op_monthly.get(key)
+        if op_total is None or op_total == 0:
+            return pd.NA, ""
+        ratio_mask_val = (row[Col.YEAR] <= 2018) or ((row[Col.YEAR] == 2019) and (row[Col.MONTH] <= 3))
+        ratio = 0.3 if ratio_mask_val else 0.4
+        std = int(round(op_total * ratio))
+        formula = f"운영기금 총액({int(op_total):,}) × {int(ratio * 100)}%"
+        return std, formula
+
+    std_formula = missed.apply(_calc_standard, axis=1, result_type="expand")
+    missed[Col.STANDARD] = std_formula[0]
+    missed[Col.FORMULA] = std_formula[1]
     missed[Col.DIFF] = pd.NA
     
     ref_date = extract_date_from_filename(filename) if filename else None
@@ -399,16 +428,63 @@ def generate_missed_months(
         missed = missed.drop(columns=["serial"])
     else:
         missed[Col.REMARKS] = ""
+    missed[Col.PREV_MONTH_AMT] = None
+    missed[Col.NEXT_MONTH_AMT] = None
     
     missed = missed[RESULT_COLUMNS].sort_values([Col.NAME, Col.YEAR, Col.MONTH, Col.CODE])
     
     return missed, filtered_count
 
-def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None):
+def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw=None):
     """
     데이터프레임을 엑셀 바이트로 변환 (리팩토링 버전)
     """
     buffer = BytesIO()
+    
+    def _calc_adjacent_month_amounts(df_errors, df_raw):
+        if df_raw is None or df_errors is None or df_errors.empty or df_raw.empty:
+            return df_errors
+        if Col.CODE1 not in df_raw.columns or Col.CODE2 not in df_raw.columns:
+            return df_errors
+        df_work = df_raw.copy()
+        df_work["canonical"] = 0
+        mask_op = ((df_work[Col.CODE1] == 1) & (df_work[Col.CODE2].between(1, 7))).fillna(False)
+        mask_coop = ((df_work[Col.CODE1] == 2) & (df_work[Col.CODE2] == 1)).fillna(False)
+        mask_welf = ((df_work[Col.CODE1] == 3) & (df_work[Col.CODE2] == 1)).fillna(False)
+        df_work.loc[mask_op, "canonical"] = 1
+        df_work.loc[mask_coop, "canonical"] = 2
+        df_work.loc[mask_welf, "canonical"] = 3
+        valid = df_work[df_work["canonical"] > 0].copy()
+        valid["serial"] = valid[Col.YEAR] * 12 + valid[Col.MONTH]
+        grouped = valid.groupby([Col.NAME, "serial", "canonical"])[Col.RAW_DEPOSIT].sum().reset_index()
+        lookup = {}
+        for _, row in grouped.iterrows():
+            lookup[(row[Col.NAME], row["serial"], row["canonical"])] = int(row[Col.RAW_DEPOSIT])
+        df_out = df_errors.copy()
+        if Col.PREV_MONTH_AMT not in df_out.columns:
+            df_out[Col.PREV_MONTH_AMT] = None
+        if Col.NEXT_MONTH_AMT not in df_out.columns:
+            df_out[Col.NEXT_MONTH_AMT] = None
+        for idx, row in df_out.iterrows():
+            status = str(row.get(Col.STATUS, ""))
+            if status not in (Status.INSUFFICIENT, Status.EXCESS, Status.UNPAID):
+                continue
+            fund_name = str(row.get(Col.FUND_NAME, ""))
+            canonical_map = {"운영": 1, "협력": 2, "복지": 3}
+            canonical = canonical_map.get(fund_name)
+            if canonical is None:
+                continue
+            name = row[Col.NAME]
+            cur_serial = int(row[Col.YEAR]) * 12 + int(row[Col.MONTH])
+            prev_serial = cur_serial - 1
+            next_serial = cur_serial + 1
+            prev_val = lookup.get((name, prev_serial, canonical))
+            next_val = lookup.get((name, next_serial, canonical))
+            df_out.at[idx, Col.PREV_MONTH_AMT] = prev_val if prev_val is not None else 0
+            df_out.at[idx, Col.NEXT_MONTH_AMT] = next_val if next_val is not None else 0
+        return df_out
+    
+    df_errors = _calc_adjacent_month_amounts(df_errors, df_raw)
     
     def prepare_sheet(df, exclude_cols=None):
         if df is None or df.empty:
@@ -423,25 +499,30 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None):
         # 1. 오류검출결과 시트 (사용자 요청으로 앞에 위치)
         df_e = prepare_sheet(df_errors)
         if df_e is not None:
+            df_e.index = range(1, len(df_e) + 1)
             df_e.to_excel(writer, index=True, index_label="번호", sheet_name=SheetName.ERROR_RESULT)
             ws = writer.sheets[SheetName.ERROR_RESULT]
             
             # 컬럼 너비 설정 (비율 조정: 80/110 ≈ 0.727)
             # A: 번호 (80px), B: 이름 (100px), C-E: 기본 (90px)
             # F: 코드 (80px), G,I,K: 납부금액/기준금액/차액 (110px)
-            # H: 상태 (90px), J: 기준금액 산출법 (250px), L: 비고 (400px)
+            # A: 번호, B: 이름, C-D: 납부년월, E: 기금명, F: 코드
+            # G: 상태, H: 차액, I-J: 납부/기준금액, K: 산출법
+            # L-M: 전/익월, N: 비고
             ws.column_dimensions["A"].width = 8   # 번호
             ws.column_dimensions["B"].width = 10  # 이름
             ws.column_dimensions["C"].width = 9   # 납부년
             ws.column_dimensions["D"].width = 9   # 납부월
             ws.column_dimensions["E"].width = 9   # 기금명
             ws.column_dimensions["F"].width = 8   # 코드
-            ws.column_dimensions["G"].width = 12  # 납부금액
-            ws.column_dimensions["H"].width = 12  # 기준금액
-            ws.column_dimensions["I"].width = 26  # 기준금액 산출법
-            ws.column_dimensions["J"].width = 9   # 상태
-            ws.column_dimensions["K"].width = 12  # 차액
-            ws.column_dimensions["L"].width = 41  # 비고
+            ws.column_dimensions["G"].width = 12  # 상태
+            ws.column_dimensions["H"].width = 12  # 차액
+            ws.column_dimensions["I"].width = 12  # 납부금액
+            ws.column_dimensions["J"].width = 12  # 기준금액
+            ws.column_dimensions["K"].width = 26  # 기준금액 산출법
+            ws.column_dimensions["L"].width = 14  # 전월납부금액
+            ws.column_dimensions["M"].width = 14  # 익월납부금액
+            ws.column_dimensions["N"].width = 41  # 비고
             
             # 오토필터 및 정렬/포맷팅
             last_col = get_column_letter(len(df_e.columns) + 1)
@@ -510,22 +591,22 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None):
                         cell.fill = fund_fills.get(fund_value, cell.fill)
 
                     if idx == 5:
-                        cell.fill = fund_fills.get(fund_value, cell.fill)
+                        pass
 
-                    if idx == 9:
+                    if idx == 6:
                         status_value = str(cell.value).strip() if cell.value else ""
                         if status_value == "미납":
                             cell.font = Font(color='FF9CA3AF', bold=True)
-                            cell.value = "— " + status_value
+                            cell.value = "✕ 미납"
                         elif status_value == "부족":
                             cell.font = Font(color='FFEF4444', bold=True)
-                            cell.value = "↓ " + status_value
+                            cell.value = "▼ 부족"
                         elif status_value == "초과":
                             cell.font = Font(color='FF059669', bold=True)
-                            cell.value = "↑ " + status_value
+                            cell.value = "▲ 초과"
 
-                    if idx == 10:
-                        status_cell = ws.cell(row=excel_row_num, column=10)
+                    if idx == 7:
+                        status_cell = ws.cell(row=excel_row_num, column=7)
                         status_value = str(status_cell.value).strip() if status_cell.value else ""
                         if "미납" in status_value:
                             cell.font = Font(color='FF9CA3AF', bold=True)
@@ -533,20 +614,28 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None):
                             cell.font = Font(color='FFEF4444', bold=True)
                         elif "초과" in status_value:
                             cell.font = Font(color='FF059669', bold=True)
-                        if cell.value is not None and isinstance(cell.value, (int, float)) and cell.value > 0:
+                        if cell.value is not None and isinstance(cell.value, (int, float)):
                             cell.number_format = '+#,##0;-#,##0;0'
 
-                    if idx <= 5:
-                        cell.alignment = Alignment(horizontal="center")
-                    elif idx in [6, 7]:
+                    if idx in [8, 9]:
                         cell.alignment = Alignment(horizontal="right")
                         if cell.value is not None:
                             cell.number_format = "#,##0"
-                    elif idx == 10:
+
+                    if idx in [11, 12]:
                         cell.alignment = Alignment(horizontal="right")
-                    elif idx == 9:
+                        if cell.value is not None and isinstance(cell.value, (int, float)):
+                            cell.number_format = "#,##0"
+
+                    if idx <= 5:
                         cell.alignment = Alignment(horizontal="center")
-                    elif idx == 8:
+                    elif idx == 6:
+                        cell.alignment = Alignment(horizontal="center")
+                    elif idx == 7:
+                        cell.alignment = Alignment(horizontal="right")
+                    elif idx in [8, 9]:
+                        cell.alignment = Alignment(horizontal="right")
+                    elif idx == 10:
                         cell.alignment = Alignment(horizontal="left")
                     else:
                         cell.alignment = Alignment(horizontal="center")
@@ -555,131 +644,105 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None):
         # 2. 오류요약 시트 (이름별 요약)
         df_s = prepare_sheet(df_summary)
         if df_s is not None:
+            df_s.index = range(1, len(df_s) + 1)
             df_s.to_excel(writer, index=True, index_label="번호", sheet_name=SheetName.ERROR_SUMMARY)
             ws_s = writer.sheets[SheetName.ERROR_SUMMARY]
             
-            # 컬럼 너비 설정
-            ws_s.column_dimensions["A"].width = 8   # 번호
-            ws_s.column_dimensions["B"].width = 12  # 이름
-            ws_s.column_dimensions["C"].width = 9   # 미납
-            ws_s.column_dimensions["D"].width = 9   # 부족
-            ws_s.column_dimensions["E"].width = 9   # 초과
-            ws_s.column_dimensions["F"].width = 12  # 오류건수 합계
+            ws_s.row_dimensions[1].height = 30
+            for cell in ws_s[1]:
+                cell.font = Font(color="FFFFFFFF", bold=True, size=11)
+                cell.fill = PatternFill(start_color="FF272F3A", end_color="FF272F3A", fill_type="solid")
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.border = thick_bottom_border
             
-            # 오토필터
+            ws_s.column_dimensions["A"].width = 8
+            ws_s.column_dimensions["B"].width = 12
+            ws_s.column_dimensions["C"].width = 9
+            ws_s.column_dimensions["D"].width = 9
+            ws_s.column_dimensions["E"].width = 9
+            ws_s.column_dimensions["F"].width = 12
+            
             last_col = get_column_letter(len(df_s.columns) + 1)
             ws_s.auto_filter.ref = f"A1:{last_col}{len(df_s) + 1}"
             
-            # 헤더 스타일 설정 (중앙 정렬)
-            for cell in ws_s[1]:
-                cell.alignment = Alignment(horizontal="center")
-            
-            # 데이터 행 정렬 (모든 컬럼 중앙 정렬)
             for row in ws_s.iter_rows(min_row=2, max_row=len(df_s) + 1):
                 for cell in row:
                     cell.alignment = Alignment(horizontal="center")
+                    cell.border = thin_border
                     if isinstance(cell.value, (int, float)):
                         cell.number_format = "#,##0"
-            if isinstance(cell.value, (int, float)):
-                        cell.number_format = "#,##0"
             
-            # 소계 행 추가
             if not df_s.empty:
-                # 소계 행 생성 (번호: 빈, 이름: 빈, 미납/부족/초과/합계: 합계)
-                # 소계 행 생성 (번호: "소계", 이름: 개수, 미납/부족/초과/합계: 합계)
-                total_row_data = {
-                    "번호": "",
-                    "이름": len(df_s),  # 이름 데이터의 개수
-                    "미납": df_s["미납"].sum(),
-                    "부족": df_s["부족"].sum(),
-                    "초과": df_s["초과"].sum(),
-                    "합계": df_s["합계"].sum()
-                }
-                # 마지막 행 다음에 소계 행 추가
-                last_data_row = len(df_s) + 1  # +1은 헤더 고려
-                for col_idx, col_name in enumerate(df_s.columns, start=1):
-                    cell = ws_s.cell(row=last_data_row + 1, column=col_idx)
-                    if col_name in total_row_data:
-                        cell.value = total_row_data[col_name]
-                    else:
-                        cell.value = ""
-                
-                # 소계 행의 첫 번째 컬럼에 "소계" 텍스트 설정 (번호열 대신)
-                ws_s.cell(row=last_data_row + 1, column=1).value = "소계"
-                
-                # 소계 행 스타일 적용 (굵은 폰트, 중앙 정렬, 테두리)
-                thin_border = Border(
-                    left=Side(style='thin', color='FF9CA3AF'),
-                    right=Side(style='thin', color='FF9CA3AF'),
-                    top=Side(style='thin', color='FF9CA3AF'),
-                    bottom=Side(style='thin', color='FF9CA3AF')
-                )
-                for cell in ws_s[last_data_row + 1]:
+                subtotal_row = len(df_s) + 2
+                ws_s.cell(row=subtotal_row, column=1, value="소계")
+                ws_s.cell(row=subtotal_row, column=2, value=len(df_s))
+                ws_s.cell(row=subtotal_row, column=3, value=int(df_s["미납"].sum()))
+                ws_s.cell(row=subtotal_row, column=4, value=int(df_s["부족"].sum()))
+                ws_s.cell(row=subtotal_row, column=5, value=int(df_s["초과"].sum()))
+                ws_s.cell(row=subtotal_row, column=6, value=int(df_s["합계"].sum()))
+                for cell in ws_s[subtotal_row]:
                     cell.alignment = Alignment(horizontal="center")
-                    cell.font = Font(bold=True)  # 모든 셀 굵게 표시
+                    cell.font = Font(bold=True)
+                    cell.border = thin_border
                     if isinstance(cell.value, (int, float)):
                         cell.number_format = "#,##0"
-                    cell.border = thin_border  # 테두리 적용
-                for cell in ws_s[last_data_row + 1]:
-                    cell.alignment = Alignment(horizontal="center")
-                    if isinstance(cell.value, (int, float)):
-                        cell.number_format = "#,##0"
-                        cell.font = Font(bold=True)
                 
-                # 소계 행을 헤더 바로 뒤(2행)로 이동
-                # 현재 마지막 행에 있는 소계를 삭제하고 2행에 삽입
-                if last_data_row + 1 > 2:
-                    # 마지막 행의 값 저장
-                    subtotal_row_values = [cell.value for cell in ws_s[last_data_row + 1]]
-                    # 마지막 행 삭제
-                    ws_s.delete_rows(last_data_row + 1, 1)
-                    # 2행에 소계 행 삽입
-                    ws_s.insert_rows(2, 1)
-                    # 2행에 값 복원
-                    for col_idx, value in enumerate(subtotal_row_values, start=1):
-                        ws_s.cell(row=2, column=col_idx).value = value
-                        # 스타일 복원 (굵은 폰트, 중앙 정렬, 테두리)
-                        thin_border = Border(
-                            left=Side(style='thin', color='FF9CA3AF'),
-                            right=Side(style='thin', color='FF9CA3AF'),
-                            top=Side(style='thin', color='FF9CA3AF'),
-                            bottom=Side(style='thin', color='FF9CA3AF')
-                        )
-                        cell = ws_s.cell(row=2, column=col_idx)
-                        cell.alignment = Alignment(horizontal="center")
-                        cell.font = Font(bold=True)  # 모든 셀 굵게 표시
-                        if isinstance(value, (int, float)):
-                            cell.number_format = "#,##0"
-                        cell.border = thin_border  # 테두리 적용
-                        cell = ws_s.cell(row=2, column=col_idx)
-                        cell.alignment = Alignment(horizontal="center")
-                        if isinstance(value, (int, float)):
-                            cell.number_format = "#,##0"
-                            cell.font = Font(bold=True)
+                subtotal_values = [cell.value for cell in ws_s[subtotal_row]]
+                ws_s.delete_rows(subtotal_row, 1)
+                ws_s.insert_rows(2, 1)
+                for col_idx, value in enumerate(subtotal_values, start=1):
+                    cell = ws_s.cell(row=2, column=col_idx, value=value)
+                    cell.alignment = Alignment(horizontal="center")
+                    cell.font = Font(bold=True)
+                    cell.border = thin_border
+                    if isinstance(value, (int, float)):
+                        cell.number_format = "#,##0"
+                
+                ws_s.auto_filter.ref = f"A1:{last_col}{len(df_s) + 2}"
             
-            # 소계 행이 있으면 오토필터 범위 조정
-            if not df_s.empty:
-                last_col = get_column_letter(len(df_s.columns) + 1)
-                ws_s.auto_filter.ref = f"A1:{last_col}{len(df_s) + 2}"  # +2는 소계 행 포함
-            
-            # 틀고정 적용 (1행 헤더만 고정, 2행 소계부터 스크롤)
-            ws_s.freeze_panes = "A3"  # A3부터 스크롤하면 1,2행이 고정됨
+            ws_s.freeze_panes = "A3"
 
 
         # 3. 최초납부월 시트
         df_f = prepare_sheet(df_first, exclude_cols=["구분", "코드3"])
         if df_f is not None:
+            df_f.index = range(1, len(df_f) + 1)
             df_f.to_excel(writer, index=True, index_label="번호", sheet_name=SheetName.FIRST_PAYMENT)
             ws_f = writer.sheets[SheetName.FIRST_PAYMENT]
-            # 헤더 중앙 정렬 추가 (최초납부월 시트)
+
+            ws_f.row_dimensions[1].height = 30
             for cell in ws_f[1]:
-                cell.alignment = Alignment(horizontal="center")
-                
-            # 오토필터 적용
+                cell.font = Font(color="FFFFFFFF", bold=True, size=11)
+                cell.fill = PatternFill(start_color="FF272F3A", end_color="FF272F3A", fill_type="solid")
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.border = thick_bottom_border
+
+            col_names = [str(c) for c in df_f.columns]
+            for i, name in enumerate(col_names):
+                col_letter = get_column_letter(i + 2)
+                if name == "작업일자":
+                    ws_f.column_dimensions[col_letter].width = 15
+                elif name == "이름":
+                    ws_f.column_dimensions[col_letter].width = 10
+                elif name == "입금":
+                    ws_f.column_dimensions[col_letter].width = 10
+                else:
+                    ws_f.column_dimensions[col_letter].width = 9
+            ws_f.column_dimensions["A"].width = 8
+
+            center_cols = {"납부년", "납부월", "코드1", "코드2", "이름", "작업일자"}
+            for row in ws_f.iter_rows(min_row=2, max_row=len(df_f) + 1):
+                for cell in row:
+                    cell.border = thin_border
+                    if cell.column == 1:
+                        cell.alignment = Alignment(horizontal="center")
+                    elif col_names[cell.column - 2] in center_cols:
+                        cell.alignment = Alignment(horizontal="center")
+                    if col_names[cell.column - 2] == "입금" and isinstance(cell.value, (int, float)):
+                        cell.number_format = "#,##0"
+
             last_col = get_column_letter(len(df_f.columns) + 1)
             ws_f.auto_filter.ref = f"A1:{last_col}{len(df_f) + 1}"
-            
-            # 틀고정 적용 (1행 헤더만 고정)
             ws_f.freeze_panes = "A2"
     buffer.seek(0)
     return buffer.getvalue(), output_filename
