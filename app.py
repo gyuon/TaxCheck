@@ -35,7 +35,7 @@ async def index():
 
     with ui.element("div").classes("w-full min-h-[calc(100vh-2rem)] flex flex-col items-center"):
         main = ui.column().classes(
-            "w-full max-w-[42rem] mx-auto my-auto p-6 md:p-10 "
+            "w-full max-w-[42rem] mx-auto my-auto p-5 md:p-9 "
             "bg-white rounded-[2rem] shadow-sm hover:shadow-md transition-shadow"
         )
 
@@ -52,11 +52,11 @@ async def index():
     }
 
     with main:
-        ui.label("인별납부내역 자동화").classes(
-            "text-3xl font-bold text-center text-slate-800 mb-10 w-full"
+        ui.label("인별납부내역 오류검출").classes(
+            "text-3xl font-bold text-center text-slate-800 mb-4 w-full"
         )
 
-        upload_section = ui.column().classes("w-full mb-4")
+        upload_section = ui.column().classes("w-full mb-2")
         with upload_section:
             render_upload_content(file_state, upload_section)
 
@@ -71,8 +71,8 @@ async def index():
             on_click=on_analyze,
             icon="play_arrow",
         ).props("size=lg unelevated").style(
-            "background-color: #3b41e3 !important; color: white; font-size: 14px; border-radius: 8px; padding-top: 1rem; padding-bottom: 1rem;"
-        ).classes("w-full mt-4")
+            "background-color: #3b41e3 !important; color: white; font-size: 15px; border-radius: 8px; padding-top: 1rem; padding-bottom: 1rem;"
+        ).classes("w-full mt-3")
 
 
 def render_upload_content(file_state, parent):
@@ -81,24 +81,24 @@ def render_upload_content(file_state, parent):
         size_str = f"{size_kb:,.1f} KB" if size_kb < 1024 else f"{size_kb / 1024:,.1f} MB"
         card = ui.element("div").classes(
             "w-full border-2 border-solid border-green-200 bg-green-50 "
-            "rounded-xl p-5 flex flex-col items-center justify-center gap-3 "
+            "rounded-xl p-4 h-[142.7px] flex flex-col items-center justify-center gap-2 "
             "cursor-pointer hover:border-blue-400 hover:bg-green-100/60 transition-all"
         )
         with card:
-            ui.icon("check_circle", size="32px", color="green")
+            ui.icon("check_circle", size="28px", color="green")
             with ui.column().classes("items-center gap-0"):
-                ui.label(file_state["name"]).classes("text-slate-800 font-semibold text-sm")
-                ui.label(size_str).classes("text-slate-400 text-xs")
-            ui.label("다시 업로드").classes("text-slate-500 text-xs underline")
+                ui.label(file_state["name"]).classes("text-slate-800 font-semibold text-[15px]")
+                ui.label(size_str).classes("text-slate-400 text-sm")
+            ui.label("다시 업로드").classes("text-slate-500 text-sm underline")
     else:
         card = ui.element("div").classes(
             "w-full border-2 border-dashed border-slate-200 bg-slate-50/50 rounded-xl "
-            "p-10 flex flex-col items-center justify-center gap-4 cursor-pointer "
+            "h-[142.7px] flex flex-col items-center justify-center gap-2 cursor-pointer "
             "hover:border-blue-400 hover:bg-blue-50 transition-all"
         )
         with card:
-            ui.icon("cloud_upload", size="48px").classes("text-slate-400")
-            ui.label("클릭하여 업로드 (.xlsx)").classes("text-slate-500 text-sm")
+            ui.icon("cloud_upload", size="28px").classes("text-slate-400")
+            ui.label("클릭하여 업로드 (.xlsx)").classes("text-slate-500 text-[15px]")
 
     uploader = ui.upload(
         auto_upload=True,
@@ -119,13 +119,13 @@ async def on_file_uploaded(e: UploadEventArguments, file_state, parent):
 
 def render_gsheet_card(settings):
     with ui.card().classes(
-        "w-full p-5 flex items-center cursor-pointer hover:scale-[1.01] transition-transform mb-4"
+        "w-full p-4 flex flex-col items-center cursor-pointer hover:scale-[1.01] transition-transform mb-2"
     ) as card:
-        with ui.element("div").classes("bg-slate-50 p-3 rounded-lg mr-4 shrink-0"):
+        with ui.element("div").classes("bg-slate-50 p-2 rounded-lg shrink-0 mb-0.5"):
             ui.icon("table_chart", size="24px").classes("text-slate-600")
-        with ui.column().classes("flex-1 gap-0"):
-            ui.label("졸업생 명단").classes("text-slate-800 font-semibold text-[15px]")
-            sheet_subtitle = ui.label("URL을 입력하세요").classes("text-slate-500 text-sm")
+        with ui.column().classes("gap-0 items-center"):
+            ui.label("졸업생 명단").classes("text-slate-800 font-semibold text-base text-center")
+            sheet_subtitle = ui.label("URL을 입력하세요").classes("text-slate-500 text-[15px] text-center")
 
     def fetch_title():
         title = get_google_sheets_title(settings["gsheet_url"])
@@ -156,15 +156,15 @@ def render_gsheet_card(settings):
 def render_period_card(settings):
     cur_year = datetime.now().year
     with ui.card().classes(
-        "w-full p-5 flex items-center cursor-pointer hover:scale-[1.01] transition-transform"
+        "w-full p-4 flex flex-col items-center cursor-pointer hover:scale-[1.01] transition-transform"
     ) as card:
-        with ui.element("div").classes("bg-slate-50 p-3 rounded-lg mr-4 shrink-0"):
+        with ui.element("div").classes("bg-slate-50 p-2 rounded-lg shrink-0 mb-0.5"):
             ui.icon("event", size="24px").classes("text-slate-600")
-        with ui.column().classes("flex-1 gap-0"):
-            ui.label("분석 기간").classes("text-slate-800 font-semibold text-[15px]")
+        with ui.column().classes("gap-0 items-center"):
+            ui.label("분석 기간").classes("text-slate-800 font-semibold text-base text-center")
             period_subtitle = ui.label(
                 f"{settings['start_year']}년부터 {settings['end_year']}년까지"
-            ).classes("text-slate-500 text-sm")
+            ).classes("text-slate-500 text-[15px] text-center")
 
     async def open_dialog():
         with ui.dialog().classes("rounded-xl") as dialog:
@@ -214,7 +214,7 @@ async def analyze(file_state, settings, main):
             ui.label("데이터 처리 중입니다...").classes("text-slate-500")
 
     try:
-        df_errors, df_first, df_summary, dl_name, summary = await run.io_bound(
+        df_errors, df_first, df_summary, dl_name, summary, df_view = await run.io_bound(
             process_data,
             file_state["bytes"],
             file_state["name"],
@@ -224,6 +224,7 @@ async def analyze(file_state, settings, main):
         )
     except Exception as e:
         import traceback
+        print(f"[ERROR] 분석 실패: {e}\n{traceback.format_exc()}")
 
         try:
             main.clear()
@@ -234,13 +235,14 @@ async def analyze(file_state, settings, main):
                         "text-xs text-slate-400 font-mono whitespace-pre-wrap"
                     )
         except RuntimeError:
-            pass
+            print("[ERROR] RuntimeError: UI 업데이트 실패 (클라이언트 연결 끊김 가능성)")
         return
 
     app.storage.user["result"] = {
         "df_errors": df_errors.to_dict("records"),
         "df_first": df_first.to_dict("records"),
         "df_summary": df_summary.to_dict("records") if not df_summary.empty else [],
+        "df_view": df_view.to_dict("records"),
         "dl_name": dl_name,
         "summary": summary,
     }
@@ -251,11 +253,20 @@ async def analyze(file_state, settings, main):
         with main:
             build_result_view_from_storage()
     except RuntimeError:
-        pass
+        print("[ERROR] RuntimeError: 결과 뷰 UI 업데이트 실패")
 
 
 def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
+    import logging
+    log = logging.getLogger("taxcheck")
+    log.setLevel(logging.DEBUG)
+    if not log.handlers:
+        h = logging.StreamHandler()
+        h.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+        log.addHandler(h)
+
     start_time = time.time()
+    log.info("1/8 엑셀 파일 읽기: %s", file_name)
 
     try:
         df = pd.read_excel(BytesIO(file_bytes), sheet_name="raw", header=1)
@@ -286,6 +297,7 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
         return url
 
     csv_url = to_csv_url(gsheet_url)
+    log.info("2/8 Google Sheets CSV 다운로드: %s", csv_url)
     df_sheet = pd.read_csv(csv_url)
     df_sheet = normalize_names(df_sheet)
 
@@ -306,6 +318,7 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
                 if exempt_funds:
                     exemption_map[name] = exempt_funds
 
+    log.info("3/8 졸업생 명단 필터링: %d명", len(graduation_names))
     df = df[df["이름"].isin(graduation_names)].copy()
     total_grad_count = len(df)
 
@@ -313,12 +326,14 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
         raise ValueError("졸업생 명단 필터링 후 남은 데이터가 없습니다.")
 
     df_first_payment = extract_first_payment_month(cast(pd.DataFrame, df))
+    log.info("4/8 최초납부월 추출 완료")
 
     if Col.YEAR in df.columns:
         mask = (df[Col.YEAR] >= start_year) & (df[Col.YEAR] <= end_year)
         mask = mask.fillna(False)
         df_view: pd.DataFrame = cast(pd.DataFrame, df[mask].copy())
         period_count = len(df_view)
+        log.info("5/8 년도 필터링: %d ~ %d → %d건", start_year, end_year, period_count)
         if df_view.empty:
             raise ValueError(
                 f"선택한 년도 범위({start_year} ~ {end_year})에 해당하는 데이터가 없습니다."
@@ -327,19 +342,27 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
         df_view = cast(pd.DataFrame, df.copy())
         period_count = len(df_view)
 
+    log.info("6/8 오류 검출 시작")
     df_errors = detect_errors(df_view)
+    log.info("   오류 검출 완료: %d건", len(df_errors))
 
     ref_date = extract_date_from_filename(file_name)
     ref_year = ref_date[0] if ref_date else end_year
     ref_month = ref_date[1] if ref_date else 12
 
+    effective_end_year = min(ref_year, end_year)
+    effective_end_month = ref_month if ref_year <= end_year else 12
+
+    log.info("7/8 미납월 생성")
     df_missed, filtered_count = generate_missed_months(
         df_view,
         df_first_payment,
         filename=file_name,
         graduation_names=graduation_names,
-        end_year=ref_year,
-        end_month=ref_month,
+        start_year=start_year,
+        start_month=1,
+        end_year=effective_end_year,
+        end_month=effective_end_month,
         exemption_map=exemption_map,
     )
 
@@ -402,7 +425,10 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
         )
         summary_by_name = cast(
             pd.DataFrame,
-            summary_by_name.sort_values("합계", ascending=False),
+            summary_by_name.sort_values(
+                ["합계", Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS, Col.NAME],
+                ascending=[False, False, False, False, True],
+            ),
         ).reset_index(drop=True)
         summary_by_name.index = summary_by_name.index + 1
         df_summary = summary_by_name.rename(
@@ -428,8 +454,10 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
         "duration": time.time() - start_time,
         "period": f"{start_year}년 ~ {end_year}년",
     }
+    log.info("8/8 완료 (%.2f초), df_errors=%d건, df_summary=%d건",
+             summary_info["duration"], len(df_errors), len(df_summary))
 
-    return df_errors, df_first_payment, df_summary, download_name, summary_info
+    return df_errors, df_first_payment, df_summary, download_name, summary_info, df_view
 
 
 def build_result_view_from_storage():
@@ -437,10 +465,11 @@ def build_result_view_from_storage():
     df_errors = pd.DataFrame(r["df_errors"])
     df_first = pd.DataFrame(r["df_first"])
     df_summary = pd.DataFrame(r["df_summary"]) if r["df_summary"] else pd.DataFrame()
-    build_result_view(df_errors, df_first, df_summary, r["dl_name"], r["summary"])
+    df_view = pd.DataFrame(r.get("df_view", []))
+    build_result_view(df_errors, df_first, df_summary, r["dl_name"], r["summary"], df_view)
 
 
-def build_result_view(df_errors, df_first, df_summary, dl_name, summary):
+def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view=None):
     counts = summary["counts"]
     c_miss = counts.get(Status.UNPAID, 0)
     c_under = counts.get(Status.INSUFFICIENT, 0)
@@ -453,16 +482,16 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary):
     ui.label("분석 결과").classes("text-2xl font-bold text-slate-800 text-center w-full mb-4")
 
     with ui.column().classes("w-full items-center gap-3 mb-8"):
-        excel_data, _ = to_excel_bytes(df_first, df_errors, dl_name, df_summary)
-        ui.button(
+        excel_data, _ = to_excel_bytes(df_first, df_errors, dl_name, df_summary, df_view)
+        download_button = ui.button(
             "결과 엑셀 다운로드",
-            on_click=lambda: ui.download(
-                excel_data,
-                dl_name,
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            ),
             icon="download",
         ).props("size=md unelevated").style("background-color: #3b41e3 !important; color: white; font-size: 14px; border-radius: 8px;").classes("w-full max-w-xs")
+        download_button.on("click", lambda: ui.download(
+            excel_data,
+            dl_name,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ))
         async def reset():
             app.storage.user["result_ready"] = False
             ui.navigate.to("/")
