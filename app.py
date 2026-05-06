@@ -28,14 +28,24 @@ PROJECT_DIR = Path(__file__).parent
 def _get_version() -> str:
     import subprocess
     try:
+        dirty = subprocess.call(
+            ["git", "diff", "--quiet"], cwd=PROJECT_DIR
+        ) != 0
+        if dirty:
+            files = subprocess.check_output(
+                ["git", "ls-files", "-c", "-o", "--exclude-standard"],
+                cwd=PROJECT_DIR, text=True
+            ).strip().splitlines()
+            if files:
+                max_mtime = max(
+                    (PROJECT_DIR / f).stat().st_mtime for f in files
+                )
+                return datetime.fromtimestamp(max_mtime).strftime("%Y-%m-%d %H:%M") + " 미반영"
         ts = subprocess.check_output(
             ["git", "log", "-1", "--format=%ci"],
             cwd=PROJECT_DIR, text=True
         ).strip()[:16]
-        dirty = subprocess.call(
-            ["git", "diff", "--quiet"], cwd=PROJECT_DIR
-        ) != 0
-        return ts + (" 미반영" if dirty else "")
+        return ts
     except Exception:
         pass
     try:
