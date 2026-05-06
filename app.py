@@ -26,26 +26,8 @@ PROJECT_DIR = Path(__file__).parent
 
 
 def _get_version() -> str:
-    import subprocess
     try:
-        ts = subprocess.check_output(
-            ["git", "log", "-1", "--format=%ci"],
-            cwd=PROJECT_DIR, text=True
-        ).strip()[:16]
-        return ts
-    except Exception:
-        pass
-    try:
-        files = subprocess.check_output(
-            ["git", "ls-files", "-c", "-o", "--exclude-standard"],
-            cwd=PROJECT_DIR, text=True
-        ).strip().splitlines()
-        if not files:
-            return "N/A"
-        max_mtime = max(
-            (PROJECT_DIR / f).stat().st_mtime for f in files
-        )
-        return datetime.fromtimestamp(max_mtime).strftime("%Y-%m-%d %H:%M")
+        return Path(PROJECT_DIR, "VERSION").read_text().strip()
     except Exception:
         return "N/A"
 
