@@ -54,7 +54,7 @@ class TestDataProcessorVerbose(unittest.TestCase):
         row_b = errors[errors[Col.NAME] == "UserB"].iloc[0]
         self.assertEqual(row_b[Col.STATUS], Status.INSUFFICIENT) # 불일치 제거 후 부족으로 분류
         self.assertEqual(row_b[Col.DIFF], -50000)
-        self.assertEqual(row_b[Col.FORMULA], "운영기금 총액 × 100%") # 문구 확인
+        self.assertEqual(row_b[Col.FORMULA], "운영기금 총액(100,000) × 100%")
         print_result(f"Case 2 (복지 부족): UserB - 상태={row_b[Col.STATUS]}, 차액={row_b[Col.DIFF]}, 산출법={row_b[Col.FORMULA]} (Pass)")
         
         # 4. Case 3: Excess (초과)
@@ -96,6 +96,82 @@ class TestDataProcessorVerbose(unittest.TestCase):
         e_bytes, name = data_processor.to_excel_bytes(df_dummy, pd.DataFrame(), "out.xlsx")
         self.assertTrue(len(e_bytes) > 0)
         print_result("엑셀 생성 기능 (Pass)")
+
+    def test_filename_date_filter(self):
+        print_section("파일명 기준년월 미납 필터 검증")
+
+        base_data = {
+            Col.NAME: ["TestUser", "TestUser"],
+            Col.YEAR: [2026, 2026],
+            Col.MONTH: [2, 2],
+            Col.CODE1: [1, 1],
+            Col.CODE2: [1, 3],
+            Col.RAW_DEPOSIT: [100000, 0],
+        }
+        df = pd.DataFrame(base_data)
+
+        # 1. filename 날짜 == 데이터의 납부년/월 → 미납 제외
+        missed, _ = data_processor.generate_missed_months(
+            df, filename="※정리본_26.2.14.xlsx"
+        )
+        self.assertTrue(missed.empty, "filename 날짜와 일치하는 미납이 제거되지 않음")
+        print_result("Case 1: filename(26.2) == month(2) → 미납 제외 (Pass)")
+
+        # 2. filename 날짜 ≠ 데이터의 납부년/월 → 미납 유지
+        missed, _ = data_processor.generate_missed_months(
+            df, filename="※정리본_26.1.14.xlsx"
+        )
+        self.assertFalse(missed.empty, "filename 날짜와 불일치하는 미납이 제거됨")
+        self.assertIn(Status.UNPAID, missed[Col.STATUS].values)
+        print_result("Case 2: filename(26.1) ≠ month(2) → 미납 유지 (Pass)")
+
+        # 3. filename=None → 모든 미납 유지
+        missed, _ = data_processor.generate_missed_months(df, filename=None)
+        self.assertFalse(missed.empty, "filename=None 시 미납이 제거됨")
+        print_result("Case 3: filename=None → 미납 유지 (Pass)")
+
+        # 4. detect_errors는 filename 인자가 없으므로 부족/초과에 영향 없음
+        errors_data = {
+            Col.NAME: ["TestUser", "TestUser"],
+            Col.YEAR: [2026, 2026],
+            Col.MONTH: [2, 2],
+            Col.CODE1: [1, 2],
+            Col.CODE2: [1, 1],
+            Col.RAW_DEPOSIT: [100000, 50000],
+        }
+        errors = data_processor.detect_errors(pd.DataFrame(errors_data))
+        self.assertFalse(errors.empty, "detect_errors가 부족/초과를 검출하지 못함")
+        self.assertIn(Status.EXCESS, errors[Col.STATUS].values)
+        print_result("Case 4: detect_errors는 filename 무관 → 초과 정상 검출 (Pass)")
+
+    def test_small_discrepancy_detection(self):
+        print_section("1,000원 미만 오차 검출 검증")
+
+        data = {
+            Col.NAME: ["UserX", "UserX", "UserY", "UserY"],
+            Col.YEAR: [2021, 2021, 2021, 2021],
+            Col.MONTH: [1, 1, 1, 1],
+            Col.CODE1: [1, 2, 1, 2],
+            Col.CODE2: [1, 1, 1, 1],
+            Col.RAW_DEPOSIT: [
+                100000, 40300,   # UserX: Coop 300원 초과 (기준 40,000)
+                100000, 39800,   # UserY: Coop 200원 부족 (기준 40,000)
+            ],
+        }
+        df = pd.DataFrame(data)
+        errors = data_processor.detect_errors(df)
+
+        user_x = errors[errors[Col.NAME] == "UserX"]
+        self.assertFalse(user_x.empty, "300원 초과가 검출되지 않음")
+        self.assertEqual(user_x.iloc[0][Col.STATUS], Status.EXCESS)
+        self.assertEqual(user_x.iloc[0][Col.DIFF], 300)
+        print_result("Case 1: 300원 초과 검출 (Pass)")
+
+        user_y = errors[errors[Col.NAME] == "UserY"]
+        self.assertFalse(user_y.empty, "200원 부족이 검출되지 않음")
+        self.assertEqual(user_y.iloc[0][Col.STATUS], Status.INSUFFICIENT)
+        self.assertEqual(user_y.iloc[0][Col.DIFF], -200)
+        print_result("Case 2: 200원 부족 검출 (Pass)")
 
     def test_column_name_consistency(self):
         """app.py에서 참조하는 컬럼명이 data_processor.py의 출력과 일치하는지 검증"""

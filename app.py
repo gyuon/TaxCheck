@@ -12,6 +12,7 @@ from data_processor import (
 from constants import Col, Status
 from io import BytesIO
 from datetime import datetime
+from pathlib import Path
 from typing import cast
 import os
 import pandas as pd
@@ -20,6 +21,39 @@ import time
 pd.set_option("future.no_silent_downcasting", True)
 
 DEFAULT_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1GRPi_kP7V9YBAmS-jZKpUI9pwPCpeuaXBEGlGLHfL3g/edit?gid=0#gid=0"
+
+PROJECT_DIR = Path(__file__).parent
+
+
+def _get_version() -> str:
+    import subprocess
+    try:
+        ts = subprocess.check_output(
+            ["git", "log", "-1", "--format=%ci"],
+            cwd=PROJECT_DIR, text=True
+        ).strip()[:16]
+        dirty = subprocess.call(
+            ["git", "diff", "--quiet"], cwd=PROJECT_DIR
+        ) != 0
+        return ts + (" 미반영" if dirty else "")
+    except Exception:
+        pass
+    try:
+        files = subprocess.check_output(
+            ["git", "ls-files", "-c", "-o", "--exclude-standard"],
+            cwd=PROJECT_DIR, text=True
+        ).strip().splitlines()
+        if not files:
+            return "N/A"
+        max_mtime = max(
+            (PROJECT_DIR / f).stat().st_mtime for f in files
+        )
+        return datetime.fromtimestamp(max_mtime).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return "N/A"
+
+
+VERSION = _get_version()
 
 
 @ui.page("/")
@@ -53,8 +87,11 @@ async def index():
 
     with main:
         ui.label("인별납부내역 오류검출").classes(
-            "text-3xl font-bold text-center text-slate-800 mb-4 w-full"
+            "text-3xl font-bold text-center text-slate-800 mb-0 w-full"
         )
+        ui.label(f"v{VERSION}").classes(
+            "text-sm text-slate-400 text-center w-full"
+        ).style("margin-bottom: 0.2rem")
 
         upload_section = ui.column().classes("w-full mb-2")
         with upload_section:

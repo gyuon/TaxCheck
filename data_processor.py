@@ -173,7 +173,6 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
 
         # 부족 검사
         insufficient_mask = ((config["deposit"] < std) & config["has_mask"]).fillna(False)
-        insufficient_mask = insufficient_mask & ((std - config["deposit"]) >= 1000)
         if insufficient_mask.any():
             res = work_df[insufficient_mask].copy()
             res[Col.FUND_NAME] = config["name"]
@@ -187,7 +186,6 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
 
         # 초과 검사
         excess_mask = ((config["deposit"] > std) & config["has_mask"]).fillna(False)
-        excess_mask = excess_mask & ((config["deposit"] - std) >= 1000)
         if excess_mask.any():
             res = work_df[excess_mask].copy()
             res[Col.FUND_NAME] = config["name"]
@@ -377,7 +375,15 @@ def generate_missed_months(
         
         if missed.empty:
             return pd.DataFrame(), filtered_count
-        
+
+    # 파일명 기준년월과 동일한 미납 건 제외
+    ref_date = extract_date_from_filename(filename) if filename else None
+    if ref_date:
+        same_mask = (missed[Col.YEAR] == ref_date[0]) & (missed[Col.MONTH] == ref_date[1])
+        missed = missed[~same_mask]
+        if missed.empty:
+            return pd.DataFrame(), filtered_count
+
     # 6. 결과 포맷팅
     label_map = {1: FundName.OPERATING, 2: FundName.COOPERATION, 3: FundName.WELFARE}
     code_map = {1: FundCode.OPERATING, 2: FundCode.COOPERATION, 3: FundCode.WELFARE}
@@ -416,7 +422,6 @@ def generate_missed_months(
     missed[Col.FORMULA] = std_formula[1]
     missed[Col.DIFF] = pd.NA
     
-    ref_date = extract_date_from_filename(filename) if filename else None
     if ref_date:
         cutoff_serial = ref_date[0] * 12 + ref_date[1] - 2
         if "serial" not in missed.columns:
@@ -496,6 +501,19 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
         return df[cols]
 
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:  # type: ignore[arg-type]
+        thin_border = Border(
+            left=Side(style='thin', color='FF9CA3AF'),
+            right=Side(style='thin', color='FF9CA3AF'),
+            top=Side(style='thin', color='FF9CA3AF'),
+            bottom=Side(style='thin', color='FF9CA3AF')
+        )
+        thick_bottom_border = Border(
+            left=Side(style='thin', color='FF9CA3AF'),
+            right=Side(style='thin', color='FF9CA3AF'),
+            top=Side(style='thin', color='FF9CA3AF'),
+            bottom=Side(style='thick', color='FF9CA3AF')
+        )
+
         # 1. 오류검출결과 시트 (사용자 요청으로 앞에 위치)
         df_e = prepare_sheet(df_errors)
         if df_e is not None:
@@ -527,19 +545,6 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
             # 오토필터 및 정렬/포맷팅
             last_col = get_column_letter(len(df_e.columns) + 1)
             ws.auto_filter.ref = f"A1:{last_col}{len(df_e) + 1}"
-
-            thin_border = Border(
-                left=Side(style='thin', color='FF9CA3AF'),
-                right=Side(style='thin', color='FF9CA3AF'),
-                top=Side(style='thin', color='FF9CA3AF'),
-                bottom=Side(style='thin', color='FF9CA3AF')
-            )
-            thick_bottom_border = Border(
-                left=Side(style='thin', color='FF9CA3AF'),
-                right=Side(style='thin', color='FF9CA3AF'),
-                top=Side(style='thin', color='FF9CA3AF'),
-                bottom=Side(style='thick', color='FF9CA3AF')
-            )
 
             header_font = Font(color="FFFFFFFF", bold=True, size=11)
             header_fill = PatternFill(start_color="FF272F3A", end_color="FF272F3A", fill_type="solid")
