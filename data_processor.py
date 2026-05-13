@@ -595,7 +595,7 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
             for alt_range in [f"A2:B{last_data_row}", f"F2:K{last_data_row}", f"N2:N{last_data_row}"]:
                 ws.conditional_formatting.add(
                     alt_range,
-                    FormulaRule(formula=['MOD(ROW(),2)=0'], fill=even_row_fill)
+                    FormulaRule(formula=['MOD(SUBTOTAL(3,$A$2:$A2),2)=0'], fill=even_row_fill)
                 )
 
             for row in ws.iter_rows(min_row=2, max_row=last_data_row):
