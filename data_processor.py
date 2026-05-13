@@ -5,6 +5,7 @@ import requests
 import re
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Alignment, PatternFill, Font, Border, Side
+from openpyxl.formatting.rule import FormulaRule
 import numpy as np
 from constants import Col, Status, FundName, FundCode, RESULT_COLUMNS, SheetName
 
@@ -560,6 +561,7 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
             fills = {}
 
             year_month_fill = PatternFill(start_color="FFD4E3F8", end_color="FFD4E3F8", fill_type="solid")
+            adjacent_month_fill = PatternFill(start_color="FFE0F2F1", end_color="FFE0F2F1", fill_type="solid")
             fund_fills = {
                 "협력": PatternFill(start_color="FFFEC28E", end_color="FFFEC28E", fill_type="solid"),
                 "복지": PatternFill(start_color="FFB1DCA6", end_color="FFB1DCA6", fill_type="solid"),
@@ -575,25 +577,33 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
                     cell.fill = fills[col_idx_zero]
                 cell.border = thick_bottom_border
 
-            for row in ws.iter_rows(min_row=2, max_row=len(df_e) + 1):
-                excel_row_num = row[0].row
-                is_even_row = excel_row_num % 2 == 0
+            last_data_row = len(df_e) + 1
 
-                fund_name_cell = ws.cell(row=excel_row_num, column=5)
-                fund_value = str(fund_name_cell.value).strip() if fund_name_cell.value else ""
-                
+            ws.conditional_formatting.add(
+                f"C2:D{last_data_row}",
+                FormulaRule(formula=['TRUE'], fill=year_month_fill)
+            )
+            ws.conditional_formatting.add(
+                f"L2:M{last_data_row}",
+                FormulaRule(formula=['TRUE'], fill=adjacent_month_fill)
+            )
+            for fund_name, fund_fill in fund_fills.items():
+                ws.conditional_formatting.add(
+                    f"E2:E{last_data_row}",
+                    FormulaRule(formula=[f'$E2="{fund_name}"'], fill=fund_fill)
+                )
+            for alt_range in [f"A2:B{last_data_row}", f"F2:K{last_data_row}", f"N2:N{last_data_row}"]:
+                ws.conditional_formatting.add(
+                    alt_range,
+                    FormulaRule(formula=['MOD(ROW(),2)=0'], fill=even_row_fill)
+                )
+
+            for row in ws.iter_rows(min_row=2, max_row=last_data_row):
+                excel_row_num = row[0].row
+
                 for idx, cell in enumerate(row):
                     cell.font = default_font
                     cell.border = thin_border
-
-                    if is_even_row:
-                        cell.fill = even_row_fill
-
-                    if idx in [2, 3]:
-                        cell.fill = year_month_fill
-
-                    if idx == 4:
-                        cell.fill = fund_fills.get(fund_value, cell.fill)
 
                     if idx == 5:
                         pass

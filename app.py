@@ -32,9 +32,6 @@ def _get_version() -> str:
         return "N/A"
 
 
-VERSION = _get_version()
-
-
 @ui.page("/")
 async def index():
     ui.add_head_html(
@@ -68,7 +65,7 @@ async def index():
         ui.label("인별납부내역 오류검출").classes(
             "text-3xl font-bold text-center text-slate-800 mb-0 w-full"
         )
-        ui.label(f"v{VERSION}").classes(
+        ui.label(f"v{_get_version()}").classes(
             "text-sm text-slate-400 text-center w-full"
         ).style("margin-bottom: 0.2rem")
 
