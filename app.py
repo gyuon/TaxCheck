@@ -545,4 +545,8 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
 
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 ui.run(title="인별납부내역 오류검출", port=int(os.environ.get("PORT", 8090)), reload=True, storage_secret=os.environ.get("STORAGE_SECRET", "taxcheck-local-dev"))
