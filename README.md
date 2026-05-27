@@ -51,7 +51,18 @@ python app.py
 
 ## 환경 변수
 
-현재 환경 변수 설정 불필요
+| 변수명 | 필수 | 설명 |
+|--------|------|------|
+| `GSHEET_URL` | 아니오 | Google Sheets 졸업생 명단 URL (UI에서 입력 가능, 기본값 없음) |
+
+로컬 실행 시 `.env` 파일을 프로젝트 루트에 생성:
+
+```env
+GSHEET_URL=https://docs.google.com/spreadsheets/d/...
+```
+
+> `.env` 파일은 `.gitignore`에 등록되어 있어 git에 커밋되지 않음.
+> Render 등 클라우드 배포 시에는 플랫폼의 환경변수 설정 기능 사용.
 
 ## 사용법
 

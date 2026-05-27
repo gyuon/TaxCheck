@@ -17,10 +17,12 @@ from typing import cast
 import os
 import pandas as pd
 import time
+from dotenv import load_dotenv
 
 pd.set_option("future.no_silent_downcasting", True)
 
-DEFAULT_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1GRPi_kP7V9YBAmS-jZKpUI9pwPCpeuaXBEGlGLHfL3g/edit?gid=0#gid=0"
+load_dotenv()
+DEFAULT_GSHEET_URL = os.environ.get("GSHEET_URL", "")
 
 PROJECT_DIR = Path(__file__).parent
 
@@ -131,39 +133,73 @@ async def on_file_uploaded(e: UploadEventArguments, file_state, parent):
 
 
 def render_gsheet_card(settings):
-    with ui.card().classes(
-        "w-full p-4 flex flex-col items-center cursor-pointer hover:scale-[1.01] transition-transform mb-2"
-    ) as card:
-        with ui.element("div").classes("bg-slate-50 p-2 rounded-lg shrink-0 mb-0.5"):
-            ui.icon("table_chart", size="24px").classes("text-slate-600")
-        with ui.column().classes("gap-0 items-center"):
-            ui.label("졸업생 명단").classes("text-slate-800 font-semibold text-base text-center")
-            sheet_subtitle = ui.label("URL을 입력하세요").classes("text-slate-500 text-[15px] text-center")
+    container = ui.column().classes("w-full mb-2")
 
-    def fetch_title():
-        title = get_google_sheets_title(settings["gsheet_url"])
-        sheet_subtitle.set_text(title if title else "연결 실패")
-
-    fetch_title()
-
-    async def open_dialog():
-        with ui.dialog().classes("rounded-xl") as dialog:
-            with ui.card().classes("min-w-[28rem] p-6"):
-                ui.label("졸업생 명단 설정").classes("text-lg font-semibold mb-4")
-                url_input = ui.input("Google Sheets URL", value=settings["gsheet_url"]).classes("w-full")
-                with ui.row().classes("w-full justify-end gap-2 mt-4"):
-                    ui.button("취소", on_click=dialog.close).props("outline")
-                    ui.button("저장", on_click=lambda: save()).props("unelevated")
-
-        def save():
-            settings["gsheet_url"] = url_input.value
-            sheet_subtitle.set_text("연결 중...")
-            dialog.close()
-            fetch_title()
-
+    def open_dialog():
+        with ui.dialog().classes("rounded-xl") as dialog, \
+             ui.card().classes("min-w-[28rem] p-6"):
+            ui.label("졸업생 명단 설정").classes("text-lg font-semibold mb-4")
+            url_input = ui.input("Google Sheets URL", value=settings["gsheet_url"]).classes("w-full")
+            with ui.row().classes("w-full justify-end gap-2 mt-4"):
+                ui.button("취소", on_click=dialog.close).props("outline")
+                ui.button("저장", on_click=lambda: save(dialog, url_input)).props("unelevated")
         dialog.open()
 
-    card.on("click", open_dialog)
+    def save(dlg, inp):
+        settings["gsheet_url"] = inp.value
+        dlg.close()
+        _render()
+
+    def _render():
+        container.clear()
+        with container:
+            url = settings["gsheet_url"]
+
+            if not url:
+                card = ui.element("div").classes(
+                    "w-full border-2 border-dashed border-slate-200 bg-slate-50/50 rounded-xl "
+                    "h-[142.7px] flex flex-col items-center justify-center gap-2 cursor-pointer "
+                    "hover:border-blue-400 hover:bg-blue-50 transition-all"
+                )
+                with card:
+                    ui.icon("table_chart", size="28px").classes("text-slate-400")
+                    ui.label("Google Sheets URL을 입력하세요").classes("text-slate-500 text-[15px]")
+                card.on("click", open_dialog)
+                return
+
+            title = get_google_sheets_title(url)
+
+            if title:
+                with ui.element("div").classes(
+                    "w-full border-2 border-solid border-green-200 bg-green-50 "
+                    "rounded-xl p-4 h-[142.7px] flex flex-col items-center justify-center gap-2 "
+                    "relative transition-all"
+                ):
+                    ui.button(icon="edit", on_click=open_dialog).props(
+                        "flat dense round"
+                    ).classes("absolute top-1 right-1 text-slate-400")
+                    ui.icon("check_circle", size="28px", color="green")
+                    with ui.column().classes("items-center gap-0"):
+                        ui.label("졸업생 명단").classes("text-slate-800 font-semibold text-[15px]")
+                        ui.label(title).classes("text-slate-400 text-sm")
+            else:
+                with ui.element("div").classes(
+                    "w-full border-2 border-solid border-red-200 bg-red-50 "
+                    "rounded-xl p-4 h-[142.7px] flex flex-col items-center justify-center gap-2 "
+                    "cursor-pointer relative hover:border-red-400 hover:bg-red-100/60 transition-all"
+                ) as card:
+                    ui.button(icon="edit", on_click=open_dialog).props(
+                        "flat dense round"
+                    ).classes("absolute top-1 right-1 text-slate-400")
+                    ui.icon("error", size="28px", color="red")
+                    with ui.column().classes("items-center gap-0"):
+                        ui.label("졸업생 명단").classes("text-slate-800 font-semibold text-[15px]")
+                        ui.label("연결 실패. 다시 시도하려면 클릭하세요").classes(
+                            "text-red-600 text-sm text-center"
+                        )
+                card.on("click", lambda: _render())
+
+    _render()
 
 
 def render_period_card(settings):
@@ -549,4 +585,10 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
 async def health():
     return {"status": "ok"}
 
-ui.run(title="인별납부내역 오류검출", port=int(os.environ.get("PORT", 8090)), reload=True, storage_secret=os.environ.get("STORAGE_SECRET", "taxcheck-local-dev"))
+ui.run(
+    title="인별납부내역 오류검출",
+    host="0.0.0.0",
+    port=int(os.environ.get("PORT", 10000)),
+    reload=True,
+    storage_secret=os.environ.get("STORAGE_SECRET", "taxcheck-local-dev"),
+)
