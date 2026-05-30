@@ -135,36 +135,21 @@ async def on_file_uploaded(e: UploadEventArguments, file_state, parent):
 def render_gsheet_card(settings):
     container = ui.column().classes("w-full mb-2")
 
-    def open_dialog():
-        with ui.dialog().classes("rounded-xl") as dialog, \
-             ui.card().classes("min-w-[28rem] p-6"):
-            ui.label("졸업생 명단 설정").classes("text-lg font-semibold mb-4")
-            url_input = ui.input("Google Sheets URL", value=settings["gsheet_url"]).classes("w-full")
-            with ui.row().classes("w-full justify-end gap-2 mt-4"):
-                ui.button("취소", on_click=dialog.close).props("outline")
-                ui.button("저장", on_click=lambda: save(dialog, url_input)).props("unelevated")
-        dialog.open()
-
-    def save(dlg, inp):
-        settings["gsheet_url"] = inp.value
-        dlg.close()
-        _render()
-
     def _render():
         container.clear()
         with container:
             url = settings["gsheet_url"]
 
             if not url:
-                card = ui.element("div").classes(
+                ui.element("div").classes(
                     "w-full border-2 border-dashed border-slate-200 bg-slate-50/50 rounded-xl "
-                    "h-[142.7px] flex flex-col items-center justify-center gap-2 cursor-pointer "
-                    "hover:border-blue-400 hover:bg-blue-50 transition-all"
+                    "h-[142.7px] flex flex-col items-center justify-center gap-2"
                 )
-                with card:
+                with ui.element("div"):
                     ui.icon("table_chart", size="28px").classes("text-slate-400")
-                    ui.label("Google Sheets URL을 입력하세요").classes("text-slate-500 text-[15px]")
-                card.on("click", open_dialog)
+                    ui.label("GSHEET_URL이 설정되지 않았습니다").classes(
+                        "text-slate-400 text-[15px]"
+                    )
                 return
 
             title = get_google_sheets_title(url)
@@ -173,11 +158,8 @@ def render_gsheet_card(settings):
                 with ui.element("div").classes(
                     "w-full border-2 border-solid border-green-200 bg-green-50 "
                     "rounded-xl p-4 h-[142.7px] flex flex-col items-center justify-center gap-2 "
-                    "relative transition-all"
+                    "transition-all"
                 ):
-                    ui.button(icon="edit", on_click=open_dialog).props(
-                        "flat dense round"
-                    ).classes("absolute top-1 right-1 text-slate-400")
                     ui.icon("check_circle", size="28px", color="green")
                     with ui.column().classes("items-center gap-0"):
                         ui.label("졸업생 명단").classes("text-slate-800 font-semibold text-[15px]")
@@ -186,11 +168,8 @@ def render_gsheet_card(settings):
                 with ui.element("div").classes(
                     "w-full border-2 border-solid border-red-200 bg-red-50 "
                     "rounded-xl p-4 h-[142.7px] flex flex-col items-center justify-center gap-2 "
-                    "cursor-pointer relative hover:border-red-400 hover:bg-red-100/60 transition-all"
+                    "cursor-pointer hover:border-red-400 hover:bg-red-100/60 transition-all"
                 ) as card:
-                    ui.button(icon="edit", on_click=open_dialog).props(
-                        "flat dense round"
-                    ).classes("absolute top-1 right-1 text-slate-400")
                     ui.icon("error", size="28px", color="red")
                     with ui.column().classes("items-center gap-0"):
                         ui.label("졸업생 명단").classes("text-slate-800 font-semibold text-[15px]")

@@ -53,7 +53,7 @@ python app.py
 
 | 변수명 | 필수 | 설명 |
 |--------|------|------|
-| `GSHEET_URL` | 아니오 | Google Sheets 졸업생 명단 URL (UI에서 입력 가능, 기본값 없음) |
+| `GSHEET_URL` | 아니오 | Google Sheets 졸업생 명단 URL (환경변수로만 설정, 기본값 없음) |
 
 로컬 실행 시 `.env` 파일을 프로젝트 루트에 생성:
 
