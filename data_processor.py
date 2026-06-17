@@ -86,6 +86,20 @@ def extract_first_payment_month(df: pd.DataFrame) -> pd.DataFrame:
     df_first.index = df_first.index + 1
     return df_first
 
+def _calculate_cooperation_standard(op_total: float | int, year: int, month: int) -> tuple[int, str]:
+    """협력기금 기준금액과 산출법 문자열을 계산한다."""
+    op_total_int = int(op_total)
+    op_text = f"{op_total_int:,}"
+
+    if (year < 2014) or (year == 2014 and month <= 2):
+        return int(round(op_total / 3)), f"운영기금 총액({op_text}) ÷ 3"
+
+    if (year < 2019) or (year == 2019 and month <= 3):
+        return int(round(op_total * 0.3)), f"운영기금 총액({op_text}) × 30%"
+
+    return int(round(op_total * 0.4)), f"운영기금 총액({op_text}) × 40%"
+
+
 def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
     """
     오류를 검출하여 결과를 생성한다. (가속화 버전)
@@ -160,17 +174,15 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
     for config in fund_configs:
         # 기금별 기준금액 및 산출법 설정
         if config["type"] == "coop":
-            # 협력기금 비율 결정 (2019년 3월 이전 0.3, 이후 0.4)
-            ratio_mask = (years <= 2018) | ((years == 2019) & (months <= 3))
-            ratios = pd.Series(np.where(ratio_mask, 0.3, 0.4), index=work_df.index)
-            
-            target_amounts = op_deposit * ratios
-            std = target_amounts.round().astype(int)
+            standard_formula = [
+                _calculate_cooperation_standard(op_total, int(year), int(month))
+                for op_total, year, month in zip(op_deposit, years, months)
+            ]
+            std = pd.Series([item[0] for item in standard_formula], index=work_df.index)
+            formula_series = pd.Series([item[1] for item in standard_formula], index=work_df.index)
         else:
-            ratios = pd.Series(1.0, index=work_df.index)
             std = op_deposit
-
-        formula_series = "운영기금 총액(" + op_deposit.apply(lambda x: f"{int(x):,}").astype(str) + ") × " + (ratios * 100).astype(int).astype(str) + "%"
+            formula_series = "운영기금 총액(" + op_deposit.apply(lambda x: f"{int(x):,}").astype(str) + ") × 100%"
 
         # 부족 검사
         insufficient_mask = ((config["deposit"] < std) & config["has_mask"]).fillna(False)
@@ -412,10 +424,10 @@ def generate_missed_months(
         op_total = op_monthly.get(key)
         if op_total is None or op_total == 0:
             return pd.NA, ""
-        ratio_mask_val = (row[Col.YEAR] <= 2018) or ((row[Col.YEAR] == 2019) and (row[Col.MONTH] <= 3))
-        ratio = 0.3 if ratio_mask_val else 0.4
-        std = int(round(op_total * ratio))
-        formula = f"운영기금 총액({int(op_total):,}) × {int(ratio * 100)}%"
+        if canonical == 2:
+            return _calculate_cooperation_standard(op_total, int(row[Col.YEAR]), int(row[Col.MONTH]))
+        std = int(round(op_total))
+        formula = f"운영기금 총액({int(op_total):,}) × 100%"
         return std, formula
 
     std_formula = missed.apply(_calc_standard, axis=1, result_type="expand")

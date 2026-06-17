@@ -173,6 +173,79 @@ class TestDataProcessorVerbose(unittest.TestCase):
         self.assertEqual(user_y.iloc[0][Col.DIFF], -200)
         print_result("Case 2: 200원 부족 검출 (Pass)")
 
+    def test_cooperation_standard_rule_boundaries(self):
+        print_section("협력기금 기준금액 기간별 산출법 검증")
+
+        data = {
+            Col.NAME: [
+                "BeforeRule", "BeforeRule",
+                "Start30", "Start30",
+                "End30", "End30",
+                "Start40", "Start40",
+            ],
+            Col.YEAR: [2014, 2014, 2014, 2014, 2019, 2019, 2019, 2019],
+            Col.MONTH: [2, 2, 3, 3, 3, 3, 4, 4],
+            Col.CODE1: [1, 2, 1, 2, 1, 2, 1, 2],
+            Col.CODE2: [1, 1, 1, 1, 1, 1, 1, 1],
+            Col.RAW_DEPOSIT: [
+                90000, 20000,   # 기준 30,000 = 90,000 / 3 -> 부족 10,000
+                100000, 20000,  # 기준 30,000 = 100,000 * 30% -> 부족 10,000
+                100000, 20000,  # 기준 30,000 = 100,000 * 30% -> 부족 10,000
+                100000, 30000,  # 기준 40,000 = 100,000 * 40% -> 부족 10,000
+            ],
+        }
+        df = pd.DataFrame(data)
+
+        errors = data_processor.detect_errors(df)
+
+        before = errors[errors[Col.NAME] == "BeforeRule"].iloc[0]
+        self.assertEqual(before[Col.STANDARD], 30000)
+        self.assertEqual(before[Col.FORMULA], "운영기금 총액(90,000) ÷ 3")
+        self.assertEqual(before[Col.STATUS], Status.INSUFFICIENT)
+        self.assertEqual(before[Col.DIFF], -10000)
+
+        start30 = errors[errors[Col.NAME] == "Start30"].iloc[0]
+        self.assertEqual(start30[Col.STANDARD], 30000)
+        self.assertEqual(start30[Col.FORMULA], "운영기금 총액(100,000) × 30%")
+        self.assertEqual(start30[Col.STATUS], Status.INSUFFICIENT)
+        self.assertEqual(start30[Col.DIFF], -10000)
+
+        end30 = errors[errors[Col.NAME] == "End30"].iloc[0]
+        self.assertEqual(end30[Col.STANDARD], 30000)
+        self.assertEqual(end30[Col.FORMULA], "운영기금 총액(100,000) × 30%")
+        self.assertEqual(end30[Col.STATUS], Status.INSUFFICIENT)
+        self.assertEqual(end30[Col.DIFF], -10000)
+
+        start40 = errors[errors[Col.NAME] == "Start40"].iloc[0]
+        self.assertEqual(start40[Col.STANDARD], 40000)
+        self.assertEqual(start40[Col.FORMULA], "운영기금 총액(100,000) × 40%")
+        self.assertEqual(start40[Col.STATUS], Status.INSUFFICIENT)
+        self.assertEqual(start40[Col.DIFF], -10000)
+
+        print_result("협력기금 기간별 기준금액 산출법 (Pass)")
+
+    def test_cooperation_missed_month_standard_uses_new_rule(self):
+        print_section("협력기금 미납 기준금액 신규 산출법 검증")
+
+        data = {
+            Col.NAME: ["MissingCoop", "MissingCoop"],
+            Col.YEAR: [2014, 2014],
+            Col.MONTH: [2, 2],
+            Col.CODE1: [1, 3],
+            Col.CODE2: [1, 1],
+            Col.RAW_DEPOSIT: [90000, 90000],
+        }
+        df = pd.DataFrame(data)
+
+        missed, _ = data_processor.generate_missed_months(df)
+        coop = missed[missed[Col.FUND_NAME] == FundName.COOPERATION].iloc[0]
+
+        self.assertEqual(coop[Col.STATUS], Status.UNPAID)
+        self.assertEqual(coop[Col.STANDARD], 30000)
+        self.assertEqual(coop[Col.FORMULA], "운영기금 총액(90,000) ÷ 3")
+
+        print_result("협력기금 미납 기준금액 /3 산출법 (Pass)")
+
     def test_column_name_consistency(self):
         """app.py에서 참조하는 컬럼명이 data_processor.py의 출력과 일치하는지 검증"""
         print_section("컬럼명 일관성 검증 (app.py ↔ data_processor.py)")
