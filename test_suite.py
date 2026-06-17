@@ -310,6 +310,30 @@ class TestDataProcessorVerbose(unittest.TestCase):
         self.assertEqual(status_code_keyword.value.value, 200)
         print_result("/health 라우트 status_code=200 명시 (Pass)")
 
+    def test_nicegui_reload_disabled_on_render(self):
+        print_section("Render 환경 reload 비활성화 검증")
+
+        app_source = Path(__file__).with_name("app.py").read_text(encoding="utf-8")
+        module = ast.parse(app_source)
+
+        ui_run_call = next(
+            node.value
+            for node in module.body
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "run"
+        )
+
+        reload_keyword = next(
+            (keyword for keyword in ui_run_call.keywords if keyword.arg == "reload"),
+            None,
+        )
+
+        self.assertIsNotNone(reload_keyword, "ui.run에 reload 환경 분기가 명시되어야 함")
+        self.assertEqual(ast.unparse(reload_keyword.value), "os.environ.get('RENDER') != 'true'")
+        print_result("Render에서는 reload=False, 로컬에서는 reload=True 분기 (Pass)")
+
 if __name__ == '__main__':
     # Run tests with verbosity but relying on our custom prints for detail
     suite = unittest.TestLoader().loadTestsFromTestCase(TestDataProcessorVerbose)

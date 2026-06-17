@@ -568,6 +568,6 @@ ui.run(
     title="인별납부내역 오류검출",
     host="0.0.0.0",
     port=int(os.environ.get("PORT", 10000)),
-    reload=True,
+    reload=os.environ.get("RENDER") != "true",
     storage_secret=os.environ.get("STORAGE_SECRET", "taxcheck-local-dev"),
 )
