@@ -560,7 +560,7 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
 
 
 
-@app.get("/health")
+@app.get("/health", status_code=200)
 async def health():
     return {"status": "ok"}
 

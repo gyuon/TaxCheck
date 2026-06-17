@@ -1,9 +1,11 @@
 
 import unittest
+import ast
 import pandas as pd
 import numpy as np
 import data_processor
 import sys
+from pathlib import Path
 from constants import Col, Status, FundName, FundCode, RESULT_COLUMNS
 
 # Helper to print colored output or distinct separators
@@ -274,6 +276,39 @@ class TestDataProcessorVerbose(unittest.TestCase):
         self.assertTrue(actual_status_values.issubset(expected_status_values), 
                         f"예상치 못한 상태 값: {actual_status_values - expected_status_values}")
         print_result(f"'{Col.STATUS}' 컬럼 값 검증: {actual_status_values} (Pass)")
+
+    def test_health_endpoint_declares_status_code_200(self):
+        print_section("헬스체크 엔드포인트 HTTP 200 명시 검증")
+
+        app_source = Path(__file__).with_name("app.py").read_text(encoding="utf-8")
+        module = ast.parse(app_source)
+
+        health_function = next(
+            node
+            for node in module.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "health"
+        )
+
+        route_decorator = next(
+            decorator
+            for decorator in health_function.decorator_list
+            if isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr == "get"
+            and decorator.args
+            and isinstance(decorator.args[0], ast.Constant)
+            and decorator.args[0].value == "/health"
+        )
+
+        status_code_keyword = next(
+            (keyword for keyword in route_decorator.keywords if keyword.arg == "status_code"),
+            None,
+        )
+
+        self.assertIsNotNone(status_code_keyword, "/health 라우트에 status_code=200이 명시되어야 함")
+        self.assertIsInstance(status_code_keyword.value, ast.Constant)
+        self.assertEqual(status_code_keyword.value.value, 200)
+        print_result("/health 라우트 status_code=200 명시 (Pass)")
 
 if __name__ == '__main__':
     # Run tests with verbosity but relying on our custom prints for detail
