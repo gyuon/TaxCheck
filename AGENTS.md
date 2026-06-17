@@ -34,6 +34,12 @@ python app.py
 python -m unittest test_suite.py
 ```
 
+## Release / Push Workflow
+
+- 원격 push 전에는 반드시 `VERSION`을 기존 형식(`YYYY-MM-DD HH:MM KST`)으로 갱신한다.
+- 버전 갱신 커밋을 만든 뒤 push한다.
+- 예: 기능 커밋 → `VERSION` 갱신 커밋 → push.
+
 ## Environment Variables
 
 현재 환경 변수 없음 (Google Sheets는 공개 URL 사용)
