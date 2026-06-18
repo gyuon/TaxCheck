@@ -7,16 +7,10 @@ from constants import Col, Status
 def _calc_adjacent_month_amounts(df_errors, df_raw):
     if df_raw is None or df_errors is None or df_errors.empty or df_raw.empty:
         return df_errors
-    if Col.CODE1 not in df_raw.columns or Col.CODE2 not in df_raw.columns:
+    if Col.CODE1 not in df_raw.columns:
         return df_errors
     df_work = df_raw.copy()
-    df_work["canonical"] = 0
-    mask_op = ((df_work[Col.CODE1] == 1) & (df_work[Col.CODE2].between(1, 7))).fillna(False)
-    mask_coop = ((df_work[Col.CODE1] == 2) & (df_work[Col.CODE2] == 1)).fillna(False)
-    mask_welf = ((df_work[Col.CODE1] == 3) & (df_work[Col.CODE2] == 1)).fillna(False)
-    df_work.loc[mask_op, "canonical"] = 1
-    df_work.loc[mask_coop, "canonical"] = 2
-    df_work.loc[mask_welf, "canonical"] = 3
+    df_work["canonical"] = df_work[Col.CODE1]
     valid = df_work[df_work["canonical"] > 0].copy()
     valid["serial"] = valid[Col.YEAR] * 12 + valid[Col.MONTH]
     grouped = valid.groupby([Col.NAME, "serial", "canonical"])[Col.RAW_DEPOSIT].sum().reset_index()
@@ -149,7 +143,7 @@ if test("df_raw=빈 DF → 변경 없음", df_e, pd.DataFrame(),
 total += 1
 df_e = make_error([["UserF", 2026, 6, "운영", "11", 100000, 70000, "산출법", Status.EXCESS, 30000, None, None, ""]])
 df_r = make_raw([{Col.NAME: "UserF", Col.YEAR: 2026, Col.MONTH: 5, Col.RAW_DEPOSIT: 70000}])
-if test("코드1/코드2 컬럼 없음 → 변경 없음", df_e, df_r,
+if test("코드1 컬럼 없음 → 변경 없음", df_e, df_r,
        lambda r: r[Col.PREV_MONTH_AMT].tolist() == [None] and r[Col.NEXT_MONTH_AMT].tolist() == [None]):
     passed += 1
 

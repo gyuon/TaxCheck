@@ -17,6 +17,24 @@ def normalize_names(df: pd.DataFrame) -> pd.DataFrame:
         df[Col.NAME] = df[Col.NAME].astype(str).str.strip()
     return df
 
+
+OPERATING_TARGET_CODE2 = {1, 2, 5, 6, 7}
+
+
+def filter_error_detection_target_payments(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    오류검출 대상 납부내역만 남긴다.
+    - 운영기금: 11, 12, 15, 16, 17
+    - 협력기금: 21
+    - 복지기금: 31
+    """
+    mask = (
+        ((df[Col.CODE1] == 1) & df[Col.CODE2].isin(OPERATING_TARGET_CODE2))
+        | ((df[Col.CODE1] == 2) & (df[Col.CODE2] == 1))
+        | ((df[Col.CODE1] == 3) & (df[Col.CODE2] == 1))
+    ).fillna(False)
+    return df[mask].copy()
+
 def get_google_sheets_title(url: str) -> str | None:
     """
     구글 시트 URL에서 제목을 추출한다.
@@ -59,20 +77,10 @@ def extract_date_from_filename(filename: str) -> tuple[int, int] | None:
 def extract_first_payment_month(df: pd.DataFrame) -> pd.DataFrame:
     """
     최초 납부월 명단을 추출한다.
-    조건:
-      - (코드1==1 & 코드2 1~7) 
-      - (코드1==2 & 코드2==1) 
-      - (코드1==3 & 코드2==1)
+    전제: df는 filter_error_detection_target_payments() 적용 후 데이터다.
     """
     # 0. 데이터 전처리 (이름 공백 제거)
-    df_work = normalize_names(df.copy())
-        
-    # 1. 조건 필터링
-    condition = (
-        ((df_work[Col.CODE1] == 1) & (df_work[Col.CODE2].between(1, 7))) |
-        ((df_work[Col.CODE1].isin([2, 3])) & (df_work[Col.CODE2] == 1))
-    ).fillna(False)
-    df_first = df_work[condition].copy()
+    df_first = normalize_names(df.copy())
     
     # 2. 불필요한 열 제거
     exclude_cols = ["구분", "코드3"]
@@ -103,20 +111,12 @@ def _calculate_cooperation_standard(op_total: float | int, year: int, month: int
 def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
     """
     오류를 검출하여 결과를 생성한다. (가속화 버전)
+    전제: df는 filter_error_detection_target_payments() 적용 후 데이터다.
     """
     # 0. 데이터 전처리 (이름 공백 제거)
     target_df = normalize_names(df.copy())
 
-    # 1. 대상 데이터 필터링
-    # 조건: (코드1==1 & 코드2 1~7) OR (코드1==2 & 코드2==1) OR (코드1==3 & 코드2==1)
-    condition = (
-        ((target_df[Col.CODE1] == 1) & (target_df[Col.CODE2].between(1, 7))) |
-        ((target_df[Col.CODE1] == 2) & (target_df[Col.CODE2] == 1)) |
-        ((target_df[Col.CODE1] == 3) & (target_df[Col.CODE2] == 1))
-    ).fillna(False)
-    target_df = target_df[condition].copy()
-    
-    # 2. 피벗 테이블 생성: (이름, 해당년, 해당월) 별로 각 코드(1,2,3)의 입금 합계 계산
+    # 1. 피벗 테이블 생성: (이름, 해당년, 해당월) 별로 각 코드(1,2,3)의 입금 합계 계산
     pivot = target_df.pivot_table(
         index=[Col.NAME, Col.YEAR, Col.MONTH], 
         columns=Col.CODE1, 
@@ -125,13 +125,9 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
         fill_value=0
     )
     
-    # 필요한 컬럼이 없으면 생성
-    for col in [1, 2, 3]:
-        if col not in pivot.columns:
-            pivot[col] = 0
-            
-    # 작업 편의를 위해 컬럼 이름 변경
-    pivot.columns = ["운영_입금", "협력_입금", "복지_입금"]
+    # 작업 편의를 위해 대상 코드1 컬럼만 유지하고 이름 변경
+    pivot = pivot.reindex(columns=[1, 2, 3], fill_value=0)
+    pivot = pivot.rename(columns={1: "운영_입금", 2: "협력_입금", 3: "복지_입금"})
     pivot = pivot.reset_index()
     
     # 원본 데이터에서 해당 그룹에 어떤 코드들이 존재하는지 확인 (입금액 0원 등 특이 케이스 대응)
@@ -252,27 +248,11 @@ def generate_missed_months(
     - filename이 주어지면, 기준년월-3개월 이전의 미납에 "과거 미납분"을 비고에 표기한다.
     - graduation_names, end_year, end_month가 주어지면, 졸업생별로 최초납부월~기준년월까지의
       모든 월에 대해 미납을 검출한다 (원본 데이터에 없는 월도 포함).
+    - 전제: df는 filter_error_detection_target_payments() 적용 후 데이터다.
     """
-    # 1. 대상 데이터 필터링 및 "대표 코드(CanonicalCode)" 부여
-    # (코드1==1 & 코드2 1~7) -> 1
-    # (코드1==2 & 코드2==1)   -> 2
-    # (코드1==3 & 코드2==1)   -> 3
-    
-    # 먼저 전체 데이터 중 유효한 코드 범위를 가진 것만 남김 (또는 계산을 위해 플래그 생성)
-    # 복사를 떠서 작업
+    # 1. "대표 코드(CanonicalCode)" 부여. 초기 필터 이후 code1이 곧 canonical이다.
     target_df = normalize_names(df.copy())
-    
-    # Canonical Code 매핑
-    target_df["canonical"] = 0
-    mask_op = ((target_df[Col.CODE1] == 1) & (target_df[Col.CODE2].between(1, 7))).fillna(False)
-    mask_coop = ((target_df[Col.CODE1] == 2) & (target_df[Col.CODE2] == 1)).fillna(False)
-    mask_welf = ((target_df[Col.CODE1] == 3) & (target_df[Col.CODE2] == 1)).fillna(False)
-    
-    target_df.loc[mask_op, "canonical"] = 1
-    target_df.loc[mask_coop, "canonical"] = 2
-    target_df.loc[mask_welf, "canonical"] = 3
-    
-    # 유효한 canonical 코드를 가진 행만 남김 (이름/년/월 그룹 파악용)
+    target_df["canonical"] = target_df[Col.CODE1]
     valid_rows = target_df[target_df["canonical"] > 0].copy()
     
     # [신규] graduation_names, end_year, end_month가 제공되면 전체 기간 생성
@@ -293,7 +273,7 @@ def generate_missed_months(
             if name in first_serial_dict:
                 start_serial = first_serial_dict[name]
             else:
-                name_data = target_df[target_df[Col.NAME] == name]
+                name_data = valid_rows[valid_rows[Col.NAME] == name]
                 if name_data.empty:
                     continue
                 start_serial = int(name_data[Col.YEAR].min() * 12 + name_data[Col.MONTH].min())
@@ -315,7 +295,7 @@ def generate_missed_months(
         groups = pd.DataFrame(all_periods)
     else:
         # [기존 로직] 그룹핑 기준: 데이터에 존재하는 (이름, 년, 월)
-        groups = target_df[[Col.NAME, Col.YEAR, Col.MONTH]].drop_duplicates()
+        groups = valid_rows[[Col.NAME, Col.YEAR, Col.MONTH]].drop_duplicates()
     
     # 3. 각 그룹별로 필요한 Canonical Code (1, 2, 3)를 Cartesian Product로 생성
     groups["key"] = 1
@@ -407,7 +387,7 @@ def generate_missed_months(
     missed[Col.CODE] = missed["canonical"].map(code_map).astype(str)
     
     # [수정] 운영기금(1) 미납 시 코드를 "11~17"로 변경
-    missed.loc[missed["canonical"] == 1, Col.CODE] = "11~17"
+    missed.loc[missed["canonical"] == 1, Col.CODE] = FundCode.OPERATING_UNPAID
 
     missed[Col.DEPOSIT] = 0
     missed[Col.STATUS] = Status.UNPAID
@@ -462,16 +442,10 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
     def _calc_adjacent_month_amounts(df_errors, df_raw):
         if df_raw is None or df_errors is None or df_errors.empty or df_raw.empty:
             return df_errors
-        if Col.CODE1 not in df_raw.columns or Col.CODE2 not in df_raw.columns:
+        if Col.CODE1 not in df_raw.columns:
             return df_errors
         df_work = df_raw.copy()
-        df_work["canonical"] = 0
-        mask_op = ((df_work[Col.CODE1] == 1) & (df_work[Col.CODE2].between(1, 7))).fillna(False)
-        mask_coop = ((df_work[Col.CODE1] == 2) & (df_work[Col.CODE2] == 1)).fillna(False)
-        mask_welf = ((df_work[Col.CODE1] == 3) & (df_work[Col.CODE2] == 1)).fillna(False)
-        df_work.loc[mask_op, "canonical"] = 1
-        df_work.loc[mask_coop, "canonical"] = 2
-        df_work.loc[mask_welf, "canonical"] = 3
+        df_work["canonical"] = df_work[Col.CODE1]
         valid = df_work[df_work["canonical"] > 0].copy()
         valid["serial"] = valid[Col.YEAR] * 12 + valid[Col.MONTH]
         grouped = valid.groupby([Col.NAME, "serial", "canonical"])[Col.RAW_DEPOSIT].sum().reset_index()

@@ -8,6 +8,7 @@ from data_processor import (
     to_excel_bytes,
     normalize_names,
     extract_date_from_filename,
+    filter_error_detection_target_payments,
 )
 from constants import Col, Status
 from io import BytesIO
@@ -352,6 +353,17 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
 
     if df.empty:
         raise ValueError("졸업생 명단 필터링 후 남은 데이터가 없습니다.")
+
+    before_target_filter_count = len(df)
+    df = filter_error_detection_target_payments(cast(pd.DataFrame, df))
+    log.info(
+        "   오류검출 대상 코드 필터링: %d건 → %d건",
+        before_target_filter_count,
+        len(df),
+    )
+
+    if df.empty:
+        raise ValueError("오류검출 대상 코드 필터링 후 남은 데이터가 없습니다.")
 
     df_first_payment = extract_first_payment_month(cast(pd.DataFrame, df))
     log.info("4/8 최초납부월 추출 완료")

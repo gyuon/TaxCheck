@@ -99,6 +99,74 @@ class TestDataProcessorVerbose(unittest.TestCase):
         self.assertTrue(len(e_bytes) > 0)
         print_result("엑셀 생성 기능 (Pass)")
 
+    def test_filter_error_detection_target_payments_exists(self):
+        print_section("오류검출 대상 필터 API 존재 검증")
+
+        self.assertTrue(
+            hasattr(data_processor, "filter_error_detection_target_payments"),
+            "data_processor.filter_error_detection_target_payments 함수가 필요함",
+        )
+        print_result("공통 필터 함수 존재 (Pass)")
+
+    def test_error_detection_target_filter_keeps_only_included_codes(self):
+        print_section("오류검출 대상 코드 초기 필터 검증")
+
+        rows = [
+            {"label": "op11", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 1, Col.CODE2: 1, Col.RAW_DEPOSIT: 1000},
+            {"label": "op12", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 1, Col.CODE2: 2, Col.RAW_DEPOSIT: 1000},
+            {"label": "op15", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 1, Col.CODE2: 5, Col.RAW_DEPOSIT: 1000},
+            {"label": "op16", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 1, Col.CODE2: 6, Col.RAW_DEPOSIT: 1000},
+            {"label": "op17", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 1, Col.CODE2: 7, Col.RAW_DEPOSIT: 1000},
+            {"label": "coop21", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 2, Col.CODE2: 1, Col.RAW_DEPOSIT: 1000},
+            {"label": "welf31", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 3, Col.CODE2: 1, Col.RAW_DEPOSIT: 1000},
+            {"label": "op13", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 1, Col.CODE2: 3, Col.RAW_DEPOSIT: 1000},
+            {"label": "op14", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 1, Col.CODE2: 4, Col.RAW_DEPOSIT: 1000},
+            {"label": "op18", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 1, Col.CODE2: 8, Col.RAW_DEPOSIT: 1000},
+            {"label": "op19", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 1, Col.CODE2: 9, Col.RAW_DEPOSIT: 1000},
+            {"label": "op188", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 1, Col.CODE2: 88, Col.RAW_DEPOSIT: 1000},
+            {"label": "op189", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 1, Col.CODE2: 89, Col.RAW_DEPOSIT: 1000},
+            {"label": "coop22", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 2, Col.CODE2: 2, Col.RAW_DEPOSIT: 1000},
+            {"label": "welf32", Col.NAME: "User", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 3, Col.CODE2: 2, Col.RAW_DEPOSIT: 1000},
+        ]
+
+        filtered = data_processor.filter_error_detection_target_payments(pd.DataFrame(rows))
+
+        self.assertEqual(
+            filtered["label"].tolist(),
+            ["op11", "op12", "op15", "op16", "op17", "coop21", "welf31"],
+        )
+        print_result("포함코드 11,12,15,16,17,21,31만 유지 (Pass)")
+
+    def test_excluded_operating_codes_do_not_affect_cooperation_standard(self):
+        print_section("제외 운영코드 협력기금 기준금액 영향 배제 검증")
+
+        df = pd.DataFrame([
+            {Col.NAME: "StandardUser", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 1, Col.CODE2: 1, Col.RAW_DEPOSIT: 100000},
+            {Col.NAME: "StandardUser", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 1, Col.CODE2: 3, Col.RAW_DEPOSIT: 900000},
+            {Col.NAME: "StandardUser", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 2, Col.CODE2: 1, Col.RAW_DEPOSIT: 40000},
+        ])
+        filtered = data_processor.filter_error_detection_target_payments(df)
+        errors = data_processor.detect_errors(filtered)
+
+        self.assertTrue(errors.empty, "코드13 금액이 협력기금 기준금액에 포함됨")
+        print_result("코드13은 협력기금 기준금액에서 제외 (Pass)")
+
+    def test_excluded_operating_codes_do_not_count_as_operating_payment(self):
+        print_section("제외 운영코드 운영기금 납부 인정 배제 검증")
+
+        df = pd.DataFrame([
+            {Col.NAME: "UnpaidUser", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 1, Col.CODE2: 3, Col.RAW_DEPOSIT: 100000},
+            {Col.NAME: "UnpaidUser", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 2, Col.CODE2: 1, Col.RAW_DEPOSIT: 40000},
+            {Col.NAME: "UnpaidUser", Col.YEAR: 2021, Col.MONTH: 1, Col.CODE1: 3, Col.CODE2: 1, Col.RAW_DEPOSIT: 100000},
+        ])
+        filtered = data_processor.filter_error_detection_target_payments(df)
+        missed, _ = data_processor.generate_missed_months(filtered)
+        op_missed = missed[missed[Col.FUND_NAME] == FundName.OPERATING]
+
+        self.assertFalse(op_missed.empty, "코드13이 운영기금 납부로 인정됨")
+        self.assertEqual(op_missed.iloc[0][Col.CODE], FundCode.OPERATING_UNPAID)
+        print_result("코드13은 운영기금 납부로 인정하지 않음 (Pass)")
+
     def test_filename_date_filter(self):
         print_section("파일명 기준년월 미납 필터 검증")
 
