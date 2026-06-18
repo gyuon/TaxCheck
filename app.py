@@ -41,6 +41,8 @@ async def index():
         '<style>'
         "body { background-color: #f9fafb; font-family: 'Inter', 'Pretendard', sans-serif; }"
         ".nicegui-content { padding: 0 !important; }"
+        ".spin-icon .q-icon { animation: spin 1s linear infinite; }"
+        "@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }"
         "</style>"
     )
 
@@ -522,16 +524,50 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
     ui.label("분석 결과").classes("text-2xl font-bold text-slate-800 text-center w-full mb-4")
 
     with ui.column().classes("w-full items-center gap-3 mb-8"):
-        excel_data, _ = to_excel_bytes(df_first, df_errors, dl_name, df_summary, df_view)
+        cached_excel_data = {"bytes": None}
         download_button = ui.button(
             "결과 엑셀 다운로드",
             icon="download",
         ).props("size=md unelevated").style("background-color: #3b41e3 !important; color: white; font-size: 14px; border-radius: 8px;").classes("w-full max-w-xs")
-        download_button.on("click", lambda: ui.download(
-            excel_data,
-            dl_name,
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ))
+
+        async def download_excel():
+            if cached_excel_data["bytes"] is not None:
+                ui.download(
+                    cached_excel_data["bytes"],
+                    dl_name,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+                return
+
+            download_button.disable()
+            download_button.set_text("파일 생성 중")
+            download_button.props("icon=sync")
+            download_button.classes(add="spin-icon")
+            try:
+                excel_data, _ = await run.io_bound(
+                    to_excel_bytes,
+                    df_first,
+                    df_errors,
+                    dl_name,
+                    df_summary,
+                    df_view,
+                )
+                cached_excel_data["bytes"] = excel_data
+                ui.download(
+                    excel_data,
+                    dl_name,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            except Exception as e:
+                ui.notify(f"엑셀 생성 실패: {e}", type="negative")
+            finally:
+                download_button.classes(remove="spin-icon")
+                download_button.props("icon=download")
+                download_button.set_text("결과 엑셀 다운로드")
+                download_button.enable()
+
+        download_button.on("click", download_excel)
+
         async def reset():
             app.storage.user["result_ready"] = False
             ui.navigate.to("/")
