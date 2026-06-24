@@ -590,6 +590,22 @@ class TestDataProcessorVerbose(unittest.TestCase):
         self.assertIn("@keyframes spin", app_source, "회전 애니메이션 keyframes가 app.py에 정의되어야 함")
         print_result("엑셀 생성이 다운로드 핸들러로 지연되고 io_bound에서 실행됨 (Pass)")
 
+    def test_render_performance_timing_logs_exist(self):
+        print_section("Render 분석 단계별 타이밍 로그 검증")
+
+        app_source = Path(__file__).with_name("app.py").read_text(encoding="utf-8")
+        required_markers = [
+            "2/8 Google Sheets CSV 다운로드 완료",
+            "6/8 오류 검출 완료",
+            "7/8 미납월 생성 완료",
+            "결과 직렬화 완료",
+        ]
+
+        for marker in required_markers:
+            self.assertIn(marker, app_source, f"Render 로그에서 '{marker}' 타이밍을 확인할 수 있어야 함")
+
+        print_result("분석 병목 후보 단계별 타이밍 로그 존재 (Pass)")
+
 if __name__ == '__main__':
     # Run tests with verbosity but relying on our custom prints for detail
     suite = unittest.TestLoader().loadTestsFromTestCase(TestDataProcessorVerbose)

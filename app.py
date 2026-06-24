@@ -15,6 +15,7 @@ from io import BytesIO
 from datetime import datetime
 from pathlib import Path
 from typing import cast
+import logging
 import os
 import pandas as pd
 import time
@@ -269,11 +270,26 @@ async def analyze(file_state, settings, main):
             print("[ERROR] RuntimeError: UI 업데이트 실패 (클라이언트 연결 끊김 가능성)")
         return
 
+    serialize_start = time.time()
+    df_errors_records = df_errors.to_dict("records")
+    df_first_records = df_first.to_dict("records")
+    df_summary_records = df_summary.to_dict("records") if not df_summary.empty else []
+    df_view_records = df_view.to_dict("records")
+    logging_log = logging.getLogger("taxcheck")
+    logging_log.info(
+        "결과 직렬화 완료 (%.2f초), df_errors=%d건, df_first=%d건, df_summary=%d건, df_view=%d건",
+        time.time() - serialize_start,
+        len(df_errors_records),
+        len(df_first_records),
+        len(df_summary_records),
+        len(df_view_records),
+    )
+
     app.storage.user["result"] = {
-        "df_errors": df_errors.to_dict("records"),
-        "df_first": df_first.to_dict("records"),
-        "df_summary": df_summary.to_dict("records") if not df_summary.empty else [],
-        "df_view": df_view.to_dict("records"),
+        "df_errors": df_errors_records,
+        "df_first": df_first_records,
+        "df_summary": df_summary_records,
+        "df_view": df_view_records,
         "dl_name": dl_name,
         "summary": summary,
     }
@@ -329,7 +345,14 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
 
     csv_url = to_csv_url(gsheet_url)
     log.info("2/8 Google Sheets CSV 다운로드: %s", csv_url)
+    csv_start = time.time()
     df_sheet = pd.read_csv(csv_url)
+    log.info(
+        "2/8 Google Sheets CSV 다운로드 완료 (%.2f초), rows=%d, cols=%d",
+        time.time() - csv_start,
+        len(df_sheet),
+        len(df_sheet.columns),
+    )
     df_sheet = normalize_names(df_sheet)
 
     if "구분" not in df_sheet.columns or "이름" not in df_sheet.columns:
@@ -385,8 +408,14 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
         period_count = len(df_view)
 
     log.info("6/8 오류 검출 시작")
+    detect_start = time.time()
     df_errors = detect_errors(df_view)
-    log.info("   오류 검출 완료: %d건", len(df_errors))
+    log.info(
+        "6/8 오류 검출 완료 (%.2f초), df_view=%d건, df_errors=%d건",
+        time.time() - detect_start,
+        len(df_view),
+        len(df_errors),
+    )
 
     ref_date = extract_date_from_filename(file_name)
     ref_year = ref_date[0] if ref_date else end_year
@@ -396,6 +425,7 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
     effective_end_month = ref_month if ref_year <= end_year else 12
 
     log.info("7/8 미납월 생성")
+    missed_start = time.time()
     df_missed, filtered_count = generate_missed_months(
         df_view,
         df_first_payment,
@@ -406,6 +436,13 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
         end_year=effective_end_year,
         end_month=effective_end_month,
         exemption_map=exemption_map,
+    )
+    log.info(
+        "7/8 미납월 생성 완료 (%.2f초), df_missed=%d건, filtered_count=%d, graduates=%d",
+        time.time() - missed_start,
+        len(df_missed),
+        filtered_count,
+        len(graduation_names),
     )
 
     if not df_missed.empty:
