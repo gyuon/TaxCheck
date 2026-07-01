@@ -705,7 +705,7 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
 
 
         # 3. 최초납부월 시트
-        df_f = prepare_sheet(df_first, exclude_cols=["구분", "코드3"])
+        df_f = prepare_sheet(df_first, exclude_cols=["작업일자", "구분", "코드3"])
         if df_f is not None:
             df_f.index = range(1, len(df_f) + 1)
             df_f.to_excel(writer, index=True, index_label="번호", sheet_name=SheetName.FIRST_PAYMENT)

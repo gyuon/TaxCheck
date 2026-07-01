@@ -1,12 +1,13 @@
 
 import unittest
 import ast
+from io import BytesIO
 import pandas as pd
 import numpy as np
 import data_processor
 import sys
 from pathlib import Path
-from constants import Col, Status, FundName, FundCode, RESULT_COLUMNS
+from constants import Col, Status, FundName, FundCode, RESULT_COLUMNS, SheetName
 
 # Helper to print colored output or distinct separators
 def print_section(title):
@@ -637,6 +638,34 @@ class TestDataProcessorVerbose(unittest.TestCase):
         )
 
         print_result("calamine 엔진과 필수 컬럼만 읽기 설정 (Pass)")
+
+    def test_first_payment_sheet_excludes_work_date_column(self):
+        print_section("최초납부월 작업일자 컬럼 제외 검증")
+
+        df_first = pd.DataFrame({
+            "작업일자": ["2026-07-01"],
+            Col.NAME: ["UserA"],
+            Col.YEAR: [2026],
+            Col.MONTH: [7],
+            Col.CODE1: [1],
+            Col.CODE2: [1],
+            Col.RAW_DEPOSIT: [100000],
+        })
+
+        excel_bytes, _ = data_processor.to_excel_bytes(
+            df_first,
+            pd.DataFrame(),
+            "result.xlsx",
+        )
+        first_payment = pd.read_excel(BytesIO(excel_bytes), sheet_name=SheetName.FIRST_PAYMENT)
+
+        self.assertNotIn("작업일자", first_payment.columns.tolist())
+        self.assertEqual(
+            first_payment.columns.tolist(),
+            ["번호", Col.NAME, Col.YEAR, Col.MONTH, Col.CODE1, Col.CODE2, Col.RAW_DEPOSIT],
+        )
+
+        print_result("최초납부월 시트에서 작업일자 제외 (Pass)")
 
 if __name__ == '__main__':
     # Run tests with verbosity but relying on our custom prints for detail
