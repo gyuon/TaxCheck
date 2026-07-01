@@ -317,7 +317,13 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
 
     try:
         excel_read_start = time.time()
-        df = pd.read_excel(BytesIO(file_bytes), sheet_name="raw", header=1)
+        df = pd.read_excel(
+            BytesIO(file_bytes),
+            sheet_name="raw",
+            header=1,
+            engine="calamine",
+            usecols=["이름", "해당년", "해당월", "코드1", "코드2", "입금"],
+        )
     except Exception as e:
         raise ValueError(f"원본 엑셀 읽기 오류: {e}")
     log.info(

@@ -609,6 +609,35 @@ class TestDataProcessorVerbose(unittest.TestCase):
 
         print_result("분석 병목 후보 단계별 타이밍 로그 존재 (Pass)")
 
+    def test_excel_read_uses_calamine_and_required_columns_only(self):
+        print_section("엑셀 읽기 최적화 설정 검증")
+
+        app_source = Path(__file__).with_name("app.py").read_text(encoding="utf-8")
+        requirements = Path(__file__).with_name("requirements.txt").read_text(encoding="utf-8")
+        module = ast.parse(app_source)
+        process_data = next(
+            node
+            for node in module.body
+            if isinstance(node, ast.FunctionDef) and node.name == "process_data"
+        )
+        read_excel_call = next(
+            node
+            for node in ast.walk(process_data)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "read_excel"
+        )
+        keywords = {keyword.arg: keyword.value for keyword in read_excel_call.keywords}
+
+        self.assertIn("python-calamine", requirements)
+        self.assertEqual(ast.literal_eval(keywords["engine"]), "calamine")
+        self.assertEqual(
+            ast.literal_eval(keywords["usecols"]),
+            ["이름", "해당년", "해당월", "코드1", "코드2", "입금"],
+        )
+
+        print_result("calamine 엔진과 필수 컬럼만 읽기 설정 (Pass)")
+
 if __name__ == '__main__':
     # Run tests with verbosity but relying on our custom prints for detail
     suite = unittest.TestLoader().loadTestsFromTestCase(TestDataProcessorVerbose)
