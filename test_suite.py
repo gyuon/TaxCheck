@@ -595,6 +595,9 @@ class TestDataProcessorVerbose(unittest.TestCase):
 
         app_source = Path(__file__).with_name("app.py").read_text(encoding="utf-8")
         required_markers = [
+            "1/8 엑셀 파일 읽기 완료",
+            "1/8 컬럼 정리 완료",
+            "1/8 숫자 컬럼 변환 완료",
             "2/8 Google Sheets CSV 다운로드 완료",
             "6/8 오류 검출 완료",
             "7/8 미납월 생성 완료",

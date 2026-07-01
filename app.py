@@ -316,10 +316,18 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
     log.info("1/8 엑셀 파일 읽기: %s", file_name)
 
     try:
+        excel_read_start = time.time()
         df = pd.read_excel(BytesIO(file_bytes), sheet_name="raw", header=1)
     except Exception as e:
         raise ValueError(f"원본 엑셀 읽기 오류: {e}")
+    log.info(
+        "1/8 엑셀 파일 읽기 완료 (%.2f초), rows=%d, cols=%d",
+        time.time() - excel_read_start,
+        len(df),
+        len(df.columns),
+    )
 
+    column_prep_start = time.time()
     rename_map = {"해당년": Col.YEAR, "해당월": Col.MONTH}
     df = df.rename(columns=rename_map)
 
@@ -329,12 +337,23 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
         raise ValueError(f"누락된 열: {missing}")
 
     df = normalize_names(df)
+    log.info(
+        "1/8 컬럼 정리 완료 (%.2f초), required_cols=%d",
+        time.time() - column_prep_start,
+        len(required_cols),
+    )
 
+    numeric_start = time.time()
     numeric_columns = [Col.YEAR, Col.MONTH, Col.CODE1, Col.CODE2, Col.RAW_DEPOSIT]
     for col in numeric_columns:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
             df[col] = df[col].round().astype("Int64")
+    log.info(
+        "1/8 숫자 컬럼 변환 완료 (%.2f초), numeric_cols=%d",
+        time.time() - numeric_start,
+        len(numeric_columns),
+    )
 
     def to_csv_url(url: str) -> str:
         if "export?format=csv" in url:
