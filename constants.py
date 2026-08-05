@@ -40,6 +40,8 @@ class SheetName:
     """엑셀 시트 이름"""
     ERROR_RESULT = "오류검출결과"
     ERROR_SUMMARY = "오류요약"
+    PERSON_ERROR_STATUS = "개인별 오류 현황표"
+    FUND_ERROR_STATUS = "기금별 오류 현황표"
     FIRST_PAYMENT = "최초납부월"
 
 

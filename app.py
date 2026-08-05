@@ -557,6 +557,8 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
         "period_count": period_count,
         "duration": time.time() - start_time,
         "period": f"{start_year}년 ~ {end_year}년",
+        "start_year": int(start_year),
+        "end_year": int(end_year),
     }
     log.info("8/8 완료 (%.2f초), df_errors=%d건, df_summary=%d건",
              summary_info["duration"], len(df_errors), len(df_summary))
@@ -613,6 +615,8 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
                     dl_name,
                     df_summary,
                     df_view,
+                    summary.get("start_year"),
+                    summary.get("end_year"),
                 )
                 cached_excel_data["bytes"] = excel_data
                 ui.download(

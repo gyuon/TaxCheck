@@ -8,6 +8,11 @@ from openpyxl.styles import Alignment, PatternFill, Font, Border, Side
 from openpyxl.formatting.rule import FormulaRule
 import numpy as np
 from constants import Col, Status, FundName, FundCode, RESULT_COLUMNS, SheetName
+from wide_summary import (
+    build_wide_error_summary_by_fund,
+    build_wide_error_summary_by_person,
+    write_wide_summary_sheets,
+)
 
 def normalize_names(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -430,10 +435,11 @@ def generate_missed_months(
     missed[Col.NEXT_MONTH_AMT] = None
     
     missed = missed[RESULT_COLUMNS].sort_values([Col.NAME, Col.YEAR, Col.MONTH, Col.CODE])
-    
+
     return missed, filtered_count
 
-def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw=None):
+
+def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw=None, start_year=None, end_year=None):
     """
     데이터프레임을 엑셀 바이트로 변환 (리팩토링 버전)
     """
@@ -700,9 +706,11 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
                         cell.number_format = "#,##0"
                 
                 ws_s.auto_filter.ref = f"A1:{last_col}{len(df_s) + 2}"
-            
+
             ws_s.freeze_panes = "A3"
 
+
+        write_wide_summary_sheets(writer, df_errors, start_year, end_year)
 
         # 3. 최초납부월 시트
         df_f = prepare_sheet(df_first, exclude_cols=["작업일자", "구분", "코드3"])

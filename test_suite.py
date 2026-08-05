@@ -7,6 +7,8 @@ import numpy as np
 import data_processor
 import sys
 from pathlib import Path
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 from constants import Col, Status, FundName, FundCode, RESULT_COLUMNS, SheetName
 
 # Helper to print colored output or distinct separators
@@ -666,6 +668,187 @@ class TestDataProcessorVerbose(unittest.TestCase):
         )
 
         print_result("최초납부월 시트에서 작업일자 제외 (Pass)")
+
+    def test_wide_error_summary_sheet_names_exist(self):
+        print_section("wide 오류 현황표 시트명 상수 검증")
+
+        self.assertEqual(SheetName.PERSON_ERROR_STATUS, "개인별 오류 현황표")
+        self.assertEqual(SheetName.FUND_ERROR_STATUS, "기금별 오류 현황표")
+        print_result("wide 오류 현황표 시트명 상수 존재 (Pass)")
+
+    def test_wide_error_summary_aggregation_rules(self):
+        print_section("wide 오류 현황표 집계 규칙 검증")
+
+        df_errors = pd.DataFrame([
+            {Col.NAME: "A", Col.YEAR: 2021, Col.MONTH: 1, Col.FUND_NAME: FundName.COOPERATION, Col.STATUS: Status.EXCESS, Col.DIFF: 5000, Col.STANDARD: 40000},
+            {Col.NAME: "A", Col.YEAR: 2021, Col.MONTH: 2, Col.FUND_NAME: FundName.WELFARE, Col.STATUS: Status.INSUFFICIENT, Col.DIFF: -7000, Col.STANDARD: 100000},
+            {Col.NAME: "A", Col.YEAR: 2021, Col.MONTH: 3, Col.FUND_NAME: FundName.OPERATING, Col.STATUS: Status.UNPAID, Col.DIFF: pd.NA, Col.STANDARD: pd.NA},
+            {Col.NAME: "B", Col.YEAR: "2021.0", Col.MONTH: 4, Col.FUND_NAME: FundName.COOPERATION, Col.STATUS: Status.UNPAID, Col.DIFF: pd.NA, Col.STANDARD: 30000},
+        ])
+
+        person_summary = data_processor.build_wide_error_summary_by_person(df_errors, 2021, 2021)
+        row_a = person_summary[person_summary[Col.NAME] == "A"].iloc[0]
+        row_b = person_summary[person_summary[Col.NAME] == "B"].iloc[0]
+
+        self.assertEqual(row_a["2021_초과건수"], 1)
+        self.assertEqual(row_a["2021_초과금액"], 5000)
+        self.assertEqual(row_a["2021_부족건수"], 1)
+        self.assertEqual(row_a["2021_부족금액"], 7000)
+        self.assertEqual(row_a["2021_미납건수"], 1)
+        self.assertEqual(row_a["2021_미납금액"], 0)
+        self.assertEqual(row_a["총계_금액모름"], 1)
+        self.assertEqual(row_a["총계_총건수"], 3)
+        self.assertEqual(row_a["총계_총금액"], 12000)
+        self.assertEqual(row_b["2021_미납금액"], 30000)
+        self.assertEqual(row_b["총계_금액모름"], 0)
+        print_result("상태별 건수/금액/금액모름 집계 (Pass)")
+
+    def test_excel_contains_revised_wide_summary_sheets(self):
+        print_section("wide 오류 현황표 엑셀 구조 및 스타일 검증")
+
+        df_first = pd.DataFrame({Col.NAME: ["A"], Col.YEAR: [2021], Col.MONTH: [1]})
+        df_errors = pd.DataFrame([
+            {Col.NAME: "A", Col.YEAR: 2021, Col.MONTH: 1, Col.FUND_NAME: FundName.COOPERATION, Col.CODE: "21", Col.STATUS: Status.EXCESS, Col.DIFF: 5000, Col.DEPOSIT: 45000, Col.STANDARD: 40000, Col.FORMULA: "", Col.PREV_MONTH_AMT: 0, Col.NEXT_MONTH_AMT: 0, Col.REMARKS: ""},
+            {Col.NAME: "A", Col.YEAR: 2021, Col.MONTH: 2, Col.FUND_NAME: FundName.WELFARE, Col.CODE: "31", Col.STATUS: Status.INSUFFICIENT, Col.DIFF: -7000, Col.DEPOSIT: 93000, Col.STANDARD: 100000, Col.FORMULA: "", Col.PREV_MONTH_AMT: 0, Col.NEXT_MONTH_AMT: 0, Col.REMARKS: ""},
+            {Col.NAME: "A", Col.YEAR: 2021, Col.MONTH: 3, Col.FUND_NAME: FundName.OPERATING, Col.CODE: "11~17", Col.STATUS: Status.UNPAID, Col.DIFF: pd.NA, Col.DEPOSIT: 0, Col.STANDARD: pd.NA, Col.FORMULA: "", Col.PREV_MONTH_AMT: 0, Col.NEXT_MONTH_AMT: 0, Col.REMARKS: ""},
+        ])
+        df_summary = pd.DataFrame([{Col.NAME: "A", "미납": 1, "부족": 1, "초과": 1, "합계": 3}])
+
+        excel_bytes, _ = data_processor.to_excel_bytes(
+            df_first,
+            df_errors,
+            "result.xlsx",
+            df_summary,
+            pd.DataFrame(),
+            2021,
+            2021,
+        )
+        wb = load_workbook(BytesIO(excel_bytes))
+
+        self.assertEqual(
+            wb.sheetnames,
+            [
+                SheetName.ERROR_RESULT,
+                SheetName.ERROR_SUMMARY,
+                SheetName.PERSON_ERROR_STATUS,
+                SheetName.FUND_ERROR_STATUS,
+                SheetName.FIRST_PAYMENT,
+            ],
+        )
+        ws = wb[SheetName.PERSON_ERROR_STATUS]
+        self.assertEqual(ws.freeze_panes, "B3")
+        self.assertEqual(ws.auto_filter.ref, f"A2:{get_column_letter(ws.max_column)}{ws.max_row}")
+        self.assertIn("A1:A2", [str(cell_range) for cell_range in ws.merged_cells.ranges])
+        self.assertEqual(ws["A1"].alignment.horizontal, "center")
+        self.assertEqual(ws["A1"].font.size, 10)
+        self.assertEqual(ws["C2"].font.size, 9)
+        self.assertEqual(ws.column_dimensions["A"].width, 9.6)
+        self.assertEqual(ws.column_dimensions["B"].width, 3.0)
+        self.assertEqual(ws.column_dimensions["C"].width, 8.64)
+        self.assertEqual(ws.column_dimensions["D"].width, 9.72)
+
+        headers = [ws.cell(row=2, column=col).value for col in range(1, ws.max_column + 1)]
+        self.assertIn("금액모름", headers)
+        total_start_index = next(idx for idx, cell in enumerate(ws[1]) if cell.value == "총계")
+        total_headers = headers[total_start_index:]
+        self.assertLess(total_headers.index("금액모름"), total_headers.index("미납금액"))
+
+        separator_columns = [col for col in range(1, ws.max_column + 1) if ws.cell(row=1, column=col).fill.fgColor.rgb == "FFBFBFBF"]
+        self.assertGreaterEqual(len(separator_columns), 2)
+
+        self.assertEqual(ws["A1"].fill.fgColor.rgb, "FF272F3A")
+        total_header = next(cell for cell in ws[1] if cell.value == "총계")
+        self.assertEqual(total_header.fill.fgColor.rgb, "FF963634")
+        self.assertTrue(total_header.font.bold)
+        self.assertEqual(total_header.font.color.rgb, "FFFFFFFF")
+
+        excess_amount_col = headers.index("초과금액") + 1
+        excess_amount_cell = ws.cell(row=3, column=excess_amount_col)
+        self.assertEqual(excess_amount_cell.font.color.rgb, "FF059669")
+        self.assertTrue(excess_amount_cell.font.bold)
+        self.assertEqual(excess_amount_cell.font.size, 11)
+        self.assertEqual(excess_amount_cell.alignment.horizontal, "right")
+
+        total_count_col = headers.index("총건수") + 1
+        total_amount_col = headers.index("총금액") + 1
+        self.assertEqual(ws.column_dimensions[get_column_letter(total_count_col)].width, 8.64)
+        self.assertEqual(ws.column_dimensions[get_column_letter(total_amount_col)].width, 10.8)
+        self.assertEqual(ws.cell(row=3, column=total_count_col).font.size, 11)
+        self.assertEqual(ws.cell(row=3, column=total_count_col).fill.fgColor.rgb, "FFFAF0F0")
+        self.assertEqual(ws.cell(row=3, column=total_amount_col).fill.fgColor.rgb, "FFFAF0F0")
+        self.assertEqual(ws.cell(row=2, column=2).alignment.horizontal, "left")
+        self.assertEqual(ws.cell(row=1, column=1).border.top.style, "thick")
+        self.assertEqual(ws.cell(row=ws.max_row, column=1).border.bottom.style, "thick")
+        print_result("wide 오류 현황표 시트/헤더/스타일 (Pass)")
+
+    def test_lazy_download_passes_year_range_to_excel(self):
+        print_section("lazy download 연도 범위 전달 검증")
+
+        app_source = Path(__file__).with_name("app.py").read_text(encoding="utf-8")
+        self.assertIn('"start_year": int(start_year)', app_source)
+        self.assertIn('"end_year": int(end_year)', app_source)
+        self.assertIn('summary.get("start_year")', app_source)
+        self.assertIn('summary.get("end_year")', app_source)
+        print_result("다운로드 시 분석 연도 범위 전달 (Pass)")
+
+    def test_wide_summary_sheets_exist_when_no_errors(self):
+        print_section("오류 없음 wide 현황표 시트 생성 검증")
+
+        excel_bytes, _ = data_processor.to_excel_bytes(
+            pd.DataFrame({Col.NAME: ["A"], Col.YEAR: [2021], Col.MONTH: [1]}),
+            pd.DataFrame(),
+            "result.xlsx",
+            pd.DataFrame(),
+            pd.DataFrame(),
+            2021,
+            2021,
+        )
+        wb = load_workbook(BytesIO(excel_bytes))
+
+        self.assertIn(SheetName.PERSON_ERROR_STATUS, wb.sheetnames)
+        self.assertIn(SheetName.FUND_ERROR_STATUS, wb.sheetnames)
+        self.assertEqual(wb[SheetName.PERSON_ERROR_STATUS].max_row, 2)
+        self.assertEqual(wb[SheetName.PERSON_ERROR_STATUS]["A1"].value, Col.NAME)
+        print_result("오류 없음에도 wide 현황표 헤더 생성 (Pass)")
+
+    def test_wide_summary_totals_respect_year_range(self):
+        print_section("wide 오류 현황표 총계 연도 범위 검증")
+
+        df_errors = pd.DataFrame([
+            {Col.NAME: "A", Col.YEAR: 2020, Col.MONTH: 1, Col.FUND_NAME: FundName.COOPERATION, Col.STATUS: Status.EXCESS, Col.DIFF: 999999, Col.STANDARD: 40000},
+            {Col.NAME: "A", Col.YEAR: 2021, Col.MONTH: 1, Col.FUND_NAME: FundName.COOPERATION, Col.STATUS: Status.EXCESS, Col.DIFF: 5000, Col.STANDARD: 40000},
+        ])
+
+        person_summary = data_processor.build_wide_error_summary_by_person(df_errors, 2021, 2021)
+        row = person_summary.iloc[0]
+
+        self.assertEqual(row["2021_초과건수"], 1)
+        self.assertEqual(row["2021_초과금액"], 5000)
+        self.assertEqual(row["총계_초과건수"], 1)
+        self.assertEqual(row["총계_초과금액"], 5000)
+        print_result("총계가 선택 연도 범위만 반영 (Pass)")
+
+    def test_wide_summary_escapes_formula_like_names(self):
+        print_section("wide 오류 현황표 수식형 이름 이스케이프 검증")
+
+        df_first = pd.DataFrame({Col.NAME: ["=HYPERLINK(\"http://example.com\")"], Col.YEAR: [2021], Col.MONTH: [1]})
+        df_errors = pd.DataFrame([
+            {Col.NAME: "=HYPERLINK(\"http://example.com\")", Col.YEAR: 2021, Col.MONTH: 1, Col.FUND_NAME: FundName.COOPERATION, Col.CODE: "21", Col.STATUS: Status.EXCESS, Col.DIFF: 5000, Col.DEPOSIT: 45000, Col.STANDARD: 40000, Col.FORMULA: "", Col.PREV_MONTH_AMT: 0, Col.NEXT_MONTH_AMT: 0, Col.REMARKS: ""},
+        ])
+
+        excel_bytes, _ = data_processor.to_excel_bytes(
+            df_first,
+            df_errors,
+            "result.xlsx",
+            pd.DataFrame([{Col.NAME: "=HYPERLINK(\"http://example.com\")", "미납": 0, "부족": 0, "초과": 1, "합계": 1}]),
+            pd.DataFrame(),
+            2021,
+            2021,
+        )
+        ws = load_workbook(BytesIO(excel_bytes))[SheetName.PERSON_ERROR_STATUS]
+
+        self.assertEqual(ws["A3"].value, "'=HYPERLINK(\"http://example.com\")")
+        print_result("wide 현황표 이름 셀 수식 실행 방지 (Pass)")
 
 if __name__ == '__main__':
     # Run tests with verbosity but relying on our custom prints for detail
