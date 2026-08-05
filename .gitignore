@@ -3,6 +3,7 @@
 
 # IDE/Editor settings
 .opencode/
+.omo/
 
 backup/
 
@@ -17,6 +18,7 @@ backup/
 !test_*.py
 !verify_*.py
 !constants.py
+!wide_summary.py
 
 *.pen
 
@@ -43,4 +45,4 @@ __pycache__/
 .playwright-mcp/
 
 
-
+.worktrees
