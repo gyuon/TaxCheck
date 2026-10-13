@@ -11,6 +11,7 @@ from data_processor import (
     filter_error_detection_target_payments,
 )
 from constants import Col, Status
+from excel_preparation import ExcelPreparation, ExcelPreparationStatus
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
@@ -42,8 +43,9 @@ async def index():
         '<style>'
         "body { background-color: #f9fafb; font-family: 'Inter', 'Pretendard', sans-serif; }"
         ".nicegui-content { padding: 0 !important; }"
-        ".spin-icon .q-icon { animation: spin 1s linear infinite; }"
-        "@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }"
+        ".pulse-icon .q-icon { animation: icon-pulse 1.2s ease-in-out infinite; }"
+        "@keyframes icon-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.65; transform: scale(1.14); } }"
+        "@media (prefers-reduced-motion: reduce) { .pulse-icon .q-icon { animation: none; } }"
         "</style>"
     )
 
@@ -243,7 +245,7 @@ async def analyze(file_state, settings, main):
     with main:
         with ui.column().classes("w-full p-12 flex flex-col items-center"):
             ui.spinner("dots").classes("mb-4")
-            ui.label("데이터 처리 중입니다...").classes("text-slate-500")
+            ui.label("데이터 처리 중입니다").classes("text-slate-500")
 
     try:
         df_errors, df_first, df_summary, dl_name, summary, df_view = await run.io_bound(
@@ -588,25 +590,33 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
     ui.label("분석 결과").classes("text-2xl font-bold text-slate-800 text-center w-full mb-4")
 
     with ui.column().classes("w-full items-center gap-3 mb-8"):
-        cached_excel_data = {"bytes": None}
+        preparation = ExcelPreparation()
+        initial_generation = preparation.start()
+        initial_presentation = preparation.presentation
         download_button = ui.button(
-            "결과 엑셀 다운로드",
-            icon="download",
+            initial_presentation.text,
+            icon=initial_presentation.icon,
         ).props("size=md unelevated").style("background-color: #3b41e3 !important; color: white; font-size: 14px; border-radius: 8px;").classes("w-full max-w-xs")
 
-        async def download_excel():
-            if cached_excel_data["bytes"] is not None:
-                ui.download(
-                    cached_excel_data["bytes"],
-                    dl_name,
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-                return
+        def update_download_button():
+            presentation = preparation.presentation
+            download_button.set_text(presentation.text)
+            download_button.props(f"icon={presentation.icon}")
+            download_button.props(f"aria-busy={'true' if presentation.pulsing else 'false'}")
+            if presentation.pulsing:
+                download_button.classes(add="pulse-icon")
+            else:
+                download_button.classes(remove="pulse-icon")
+            if presentation.disabled:
+                download_button.disable()
+            else:
+                download_button.enable()
 
-            download_button.disable()
-            download_button.set_text("파일 생성 중")
-            download_button.props("icon=sync")
-            download_button.classes(add="spin-icon")
+        update_download_button()
+
+        async def prepare_excel(generation: int):
+            generation_started = time.perf_counter()
+            result_log = logging.getLogger("taxcheck")
             try:
                 excel_data, _ = await run.io_bound(
                     to_excel_bytes,
@@ -618,23 +628,52 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
                     summary.get("start_year"),
                     summary.get("end_year"),
                 )
-                cached_excel_data["bytes"] = excel_data
+            except Exception as e:
+                result_log.exception(
+                    "결과 엑셀 생성 실패 (%.2f초)",
+                    time.perf_counter() - generation_started,
+                )
+                if preparation.fail(generation, str(e)):
+                    try:
+                        update_download_button()
+                        ui.notify(f"엑셀 생성 실패: {e}", type="negative")
+                    except RuntimeError:
+                        result_log.info("엑셀 생성 실패 후 클라이언트 연결 종료")
+                return
+
+            if not preparation.complete(generation, excel_data):
+                result_log.info("이전 엑셀 생성 결과 폐기")
+                return
+
+            result_log.info(
+                "결과 엑셀 생성 완료 (%.2f초), bytes=%d",
+                time.perf_counter() - generation_started,
+                len(excel_data),
+            )
+            try:
+                update_download_button()
+            except RuntimeError:
+                result_log.info("엑셀 생성 완료 후 클라이언트 연결 종료")
+
+        async def handle_download():
+            if preparation.status == ExcelPreparationStatus.READY and preparation.data is not None:
                 ui.download(
-                    excel_data,
+                    preparation.data,
                     dl_name,
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
-            except Exception as e:
-                ui.notify(f"엑셀 생성 실패: {e}", type="negative")
-            finally:
-                download_button.classes(remove="spin-icon")
-                download_button.props("icon=download")
-                download_button.set_text("결과 엑셀 다운로드")
-                download_button.enable()
+                return
 
-        download_button.on("click", download_excel)
+            if preparation.status == ExcelPreparationStatus.FAILED:
+                retry_generation = preparation.start()
+                update_download_button()
+                await prepare_excel(retry_generation)
+
+        download_button.on("click", handle_download)
+        ui.timer(0.15, lambda: prepare_excel(initial_generation), once=True)
 
         async def reset():
+            preparation.invalidate()
             app.storage.user["result_ready"] = False
             ui.navigate.to("/")
 

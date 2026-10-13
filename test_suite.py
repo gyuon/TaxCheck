@@ -486,8 +486,8 @@ class TestDataProcessorVerbose(unittest.TestCase):
         self.assertEqual(ast.unparse(reload_keyword.value), "os.environ.get('RENDER') != 'true'")
         print_result("Render에서는 reload=False, 로컬에서는 reload=True 분기 (Pass)")
 
-    def test_excel_generation_runs_only_from_download_handler(self):
-        print_section("결과 화면 렌더 중 엑셀 생성 지연 검증")
+    def test_excel_generation_starts_after_result_render(self):
+        print_section("결과 화면 렌더 후 엑셀 사전 생성 검증")
 
         app_source = Path(__file__).with_name("app.py").read_text(encoding="utf-8")
         module = ast.parse(app_source)
@@ -505,58 +505,13 @@ class TestDataProcessorVerbose(unittest.TestCase):
             and node is not build_result_view
         }
 
-        self.assertIn(
-            "download_excel",
-            nested_functions,
-            "엑셀 생성은 다운로드 클릭 핸들러(download_excel) 안에서만 실행되어야 함",
-        )
+        self.assertIn("prepare_excel", nested_functions)
+        self.assertIn("handle_download", nested_functions)
 
-        class RenderPathVisitor(ast.NodeVisitor):
-            def __init__(self):
-                self.to_excel_calls = []
-
-            def visit_FunctionDef(self, node):
-                if node is build_result_view:
-                    self.generic_visit(node)
-
-            def visit_AsyncFunctionDef(self, node):
-                if node is build_result_view:
-                    self.generic_visit(node)
-
-            def visit_Call(self, node):
-                if isinstance(node.func, ast.Name) and node.func.id == "to_excel_bytes":
-                    self.to_excel_calls.append(node)
-                self.generic_visit(node)
-
-        visitor = RenderPathVisitor()
-        visitor.visit(build_result_view)
-
-        self.assertEqual(
-            visitor.to_excel_calls,
-            [],
-            "build_result_view 렌더 경로에서 to_excel_bytes를 직접 호출하면 UI 연결이 끊길 수 있음",
-        )
-
-        download_handler = nested_functions["download_excel"]
-        self.assertIn(
-            "cached_excel_data",
-            app_source,
-            "생성된 엑셀 bytes는 결과 화면 생명주기 동안 재사용되도록 캐시되어야 함",
-        )
-        self.assertIn(
-            "if cached_excel_data",
-            app_source,
-            "다운로드 핸들러는 캐시가 있으면 엑셀을 재생성하지 않고 즉시 다운로드해야 함",
-        )
-        self.assertIn(
-            "cached_excel_data[\"bytes\"] = excel_data",
-            app_source,
-            "최초 엑셀 생성 후 bytes를 캐시에 저장해야 함",
-        )
-
+        prepare_handler = nested_functions["prepare_excel"]
         io_bound_calls = [
             node
-            for node in ast.walk(download_handler)
+            for node in ast.walk(prepare_handler)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "io_bound"
@@ -569,110 +524,37 @@ class TestDataProcessorVerbose(unittest.TestCase):
 
         self.assertTrue(
             io_bound_calls,
-            "download_excel은 await run.io_bound(to_excel_bytes, ...)로 엑셀을 생성해야 함",
+            "prepare_excel은 await run.io_bound(to_excel_bytes, ...)로 엑셀을 생성해야 함",
         )
 
-        button_texts = [
-            node.args[0].value
-            for node in ast.walk(download_handler)
+        timer_calls = [
+            node
+            for node in ast.walk(build_result_view)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "set_text"
-            and node.args
-            and isinstance(node.args[0], ast.Constant)
-            and isinstance(node.args[0].value, str)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "ui"
+            and node.func.attr == "timer"
         ]
+        self.assertTrue(timer_calls, "결과 화면 렌더 후 one-shot timer로 사전 생성을 시작해야 함")
+        timer_keywords = {keyword.arg: keyword.value for keyword in timer_calls[0].keywords}
+        self.assertIn("once", timer_keywords)
+        self.assertTrue(isinstance(timer_keywords["once"], ast.Constant) and timer_keywords["once"].value)
 
-        self.assertIn(
-            "파일 생성 중",
-            button_texts,
-            "엑셀 생성 중에는 다운로드 버튼 문구가 '파일 생성 중'으로 바뀌어야 함",
-        )
-        self.assertIn(
-            "결과 엑셀 다운로드",
-            button_texts,
-            "엑셀 생성 완료 후 다운로드 버튼 문구가 원래대로 돌아와야 함",
-        )
+        handle_download_source = ast.unparse(nested_functions["handle_download"])
+        self.assertNotIn("to_excel_bytes", handle_download_source)
+        self.assertIn("preparation.data", handle_download_source)
 
-        prop_values = [
-            node.args[0].value
-            for node in ast.walk(download_handler)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "props"
-            and node.args
-            and isinstance(node.args[0], ast.Constant)
-            and isinstance(node.args[0].value, str)
-        ]
-        prop_removals = [
-            keyword.value.value
-            for node in ast.walk(download_handler)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "props"
-            for keyword in node.keywords
-            if keyword.arg == "remove"
-            and isinstance(keyword.value, ast.Constant)
-            and isinstance(keyword.value.value, str)
-        ]
+        reset_source = ast.unparse(nested_functions["reset"])
+        self.assertIn("preparation.invalidate()", reset_source)
 
-        self.assertNotIn(
-            "loading",
-            prop_values,
-            "NiceGUI loading prop은 spinner overlay로 버튼 문구를 가리므로 사용하면 안 됨",
-        )
-        self.assertNotIn(
-            "loading",
-            prop_removals,
-            "loading prop을 사용하지 않으므로 remove='loading'도 없어야 함",
-        )
-        self.assertIn(
-            "icon=sync",
-            prop_values,
-            "엑셀 생성 중에는 loading overlay 대신 회전 가능한 sync 아이콘을 표시해야 함",
-        )
-        self.assertIn(
-            "icon=download",
-            prop_values,
-            "엑셀 생성 완료 후 download 아이콘으로 복구해야 함",
-        )
-
-        class_additions = [
-            keyword.value.value
-            for node in ast.walk(download_handler)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "classes"
-            for keyword in node.keywords
-            if keyword.arg == "add"
-            and isinstance(keyword.value, ast.Constant)
-            and isinstance(keyword.value.value, str)
-        ]
-        class_removals = [
-            keyword.value.value
-            for node in ast.walk(download_handler)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "classes"
-            for keyword in node.keywords
-            if keyword.arg == "remove"
-            and isinstance(keyword.value, ast.Constant)
-            and isinstance(keyword.value.value, str)
-        ]
-
-        self.assertIn(
-            "spin-icon",
-            class_additions,
-            "엑셀 생성 중 sync 아이콘에 회전 CSS 클래스를 추가해야 함",
-        )
-        self.assertIn(
-            "spin-icon",
-            class_removals,
-            "엑셀 생성 완료 후 회전 CSS 클래스를 제거해야 함",
-        )
-        self.assertIn("spin-icon", app_source, "회전 아이콘 CSS 클래스가 app.py에 정의되어야 함")
-        self.assertIn("@keyframes spin", app_source, "회전 애니메이션 keyframes가 app.py에 정의되어야 함")
-        print_result("엑셀 생성이 다운로드 핸들러로 지연되고 io_bound에서 실행됨 (Pass)")
+        self.assertIn("pulse-icon", app_source, "pulse 아이콘 CSS 클래스가 app.py에 정의되어야 함")
+        self.assertIn("@keyframes icon-pulse", app_source, "pulse 애니메이션 keyframes가 app.py에 정의되어야 함")
+        self.assertIn("prefers-reduced-motion", app_source, "동작 줄이기 설정을 존중해야 함")
+        self.assertIn("aria-busy", app_source, "보조기기에 파일 준비 상태를 제공해야 함")
+        self.assertIn("데이터 처리 중입니다", app_source)
+        self.assertNotIn("데이터 처리 중입니다...", app_source)
+        print_result("결과 렌더 후 엑셀 사전 생성과 즉시 다운로드 (Pass)")
 
     def test_render_performance_timing_logs_exist(self):
         print_section("Render 분석 단계별 타이밍 로그 검증")

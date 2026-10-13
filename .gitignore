@@ -19,6 +19,7 @@ backup/
 !verify_*.py
 !constants.py
 !wide_summary.py
+!excel_preparation.py
 
 *.pen
 
