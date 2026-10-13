@@ -319,6 +319,87 @@ class TestDataProcessorVerbose(unittest.TestCase):
 
         print_result("협력기금 미납 기준금액 /3 산출법 (Pass)")
 
+    def test_missed_standard_uses_operating_welfare_cooperation_priority(self):
+        print_section("미납 기준금액 운영-복지-협력 우선순위 검증")
+
+        df = pd.DataFrame({
+            Col.NAME: [
+                "OperatingFirst", "OperatingFirst",
+                "WelfareFallback",
+                "CooperationFallback",
+            ],
+            Col.YEAR: [2021, 2021, 2021, 2021],
+            Col.MONTH: [1, 1, 1, 1],
+            Col.CODE1: [1, 3, 3, 2],
+            Col.CODE2: [1, 1, 1, 1],
+            Col.RAW_DEPOSIT: [100000, 80000, 90000, 40000],
+        })
+
+        missed, _ = data_processor.generate_missed_months(df)
+
+        operating_first = missed[
+            (missed[Col.NAME] == "OperatingFirst")
+            & (missed[Col.FUND_NAME] == FundName.COOPERATION)
+        ].iloc[0]
+        self.assertEqual(operating_first[Col.STANDARD], 40000)
+        self.assertEqual(operating_first[Col.DIFF], -40000)
+        self.assertEqual(operating_first[Col.FORMULA], "운영기금 총액(100,000) × 40%")
+
+        welfare_rows = missed[missed[Col.NAME] == "WelfareFallback"].set_index(Col.FUND_NAME)
+        self.assertEqual(welfare_rows.loc[FundName.OPERATING, Col.STANDARD], 90000)
+        self.assertEqual(welfare_rows.loc[FundName.OPERATING, Col.DIFF], -90000)
+        self.assertEqual(
+            welfare_rows.loc[FundName.OPERATING, Col.FORMULA],
+            "복지기금 총액(90,000) × 100%",
+        )
+        self.assertEqual(welfare_rows.loc[FundName.COOPERATION, Col.STANDARD], 36000)
+        self.assertEqual(welfare_rows.loc[FundName.COOPERATION, Col.DIFF], -36000)
+        self.assertEqual(
+            welfare_rows.loc[FundName.COOPERATION, Col.FORMULA],
+            "복지기금 총액(90,000) × 40%",
+        )
+
+        cooperation_rows = missed[missed[Col.NAME] == "CooperationFallback"].set_index(Col.FUND_NAME)
+        for fund_name in (FundName.OPERATING, FundName.WELFARE):
+            self.assertEqual(cooperation_rows.loc[fund_name, Col.STANDARD], 100000)
+            self.assertEqual(cooperation_rows.loc[fund_name, Col.DIFF], -100000)
+            self.assertEqual(
+                cooperation_rows.loc[fund_name, Col.FORMULA],
+                "협력기금 총액(40,000) ÷ 40%",
+            )
+
+        print_result("미납 기준금액 우선순위와 음수 차액 (Pass)")
+
+    def test_missed_standard_stays_unknown_when_month_has_no_payment(self):
+        print_section("당월 납부 없음 기준금액 미상 유지 검증")
+
+        df = pd.DataFrame({
+            Col.NAME: ["NoPaymentMonth"],
+            Col.YEAR: [2021],
+            Col.MONTH: [1],
+            Col.CODE1: [1],
+            Col.CODE2: [1],
+            Col.RAW_DEPOSIT: [100000],
+        })
+        df_first = data_processor.extract_first_payment_month(df)
+
+        missed, _ = data_processor.generate_missed_months(
+            df,
+            df_first=df_first,
+            graduation_names=["NoPaymentMonth"],
+            start_year=2021,
+            start_month=1,
+            end_year=2021,
+            end_month=2,
+        )
+
+        february = missed[missed[Col.MONTH] == 2]
+        self.assertEqual(len(february), 3)
+        self.assertTrue(february[Col.STANDARD].isna().all())
+        self.assertTrue(february[Col.DIFF].isna().all())
+
+        print_result("납부가 전혀 없는 달은 기준금액과 차액 미상 유지 (Pass)")
+
     def test_column_name_consistency(self):
         """app.py에서 참조하는 컬럼명이 data_processor.py의 출력과 일치하는지 검증"""
         print_section("컬럼명 일관성 검증 (app.py ↔ data_processor.py)")

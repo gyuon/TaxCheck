@@ -113,6 +113,22 @@ def _calculate_cooperation_standard(op_total: float | int, year: int, month: int
     return int(round(op_total * 0.4)), f"운영기금 총액({op_text}) × 40%"
 
 
+def _calculate_operating_standard_from_cooperation(
+    cooperation_total: float | int, year: int, month: int
+) -> tuple[int, str]:
+    """협력기금 납부액에서 운영기금 기준금액을 역산한다."""
+    cooperation_total_int = int(cooperation_total)
+    cooperation_text = f"{cooperation_total_int:,}"
+
+    if (year < 2014) or (year == 2014 and month <= 2):
+        return int(round(cooperation_total * 3)), f"협력기금 총액({cooperation_text}) × 3"
+
+    if (year < 2019) or (year == 2019 and month <= 3):
+        return int(round(cooperation_total / 0.3)), f"협력기금 총액({cooperation_text}) ÷ 30%"
+
+    return int(round(cooperation_total / 0.4)), f"협력기금 총액({cooperation_text}) ÷ 40%"
+
+
 def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
     """
     오류를 검출하여 결과를 생성한다. (가속화 버전)
@@ -397,28 +413,61 @@ def generate_missed_months(
     missed[Col.DEPOSIT] = 0
     missed[Col.STATUS] = Status.UNPAID
 
-    op_monthly = valid_rows[valid_rows["canonical"] == 1].groupby(
-        [Col.NAME, Col.YEAR, Col.MONTH]
-    )[Col.RAW_DEPOSIT].sum()
+    monthly_totals = {
+        canonical: valid_rows[valid_rows["canonical"] == canonical].groupby(
+            [Col.NAME, Col.YEAR, Col.MONTH]
+        )[Col.RAW_DEPOSIT].sum()
+        for canonical in (1, 2, 3)
+    }
+
+    def _get_monthly_total(canonical, key):
+        total = monthly_totals[canonical].get(key)
+        if total is None or pd.isna(total) or total == 0:
+            return None
+        return total
 
     def _calc_standard(row):
         key = (row[Col.NAME], row[Col.YEAR], row[Col.MONTH])
         canonical = row["canonical"]
+        year = int(row[Col.YEAR])
+        month = int(row[Col.MONTH])
+
+        # 기준금액 책정 우선순위: 운영 -> 복지 -> 협력
+        op_total = _get_monthly_total(1, key)
+        welfare_total = _get_monthly_total(3, key)
+        cooperation_total = _get_monthly_total(2, key)
+
+        if op_total is not None:
+            operating_standard = int(round(op_total))
+            source = 1
+            operating_formula = f"운영기금 총액({int(op_total):,}) × 100%"
+        elif welfare_total is not None:
+            operating_standard = int(round(welfare_total))
+            source = 3
+            operating_formula = f"복지기금 총액({int(welfare_total):,}) × 100%"
+        elif cooperation_total is not None:
+            operating_standard, operating_formula = _calculate_operating_standard_from_cooperation(
+                cooperation_total, year, month
+            )
+            source = 2
+        else:
+            return pd.NA, ""
+
         if canonical == 1:
-            return pd.NA, ""
-        op_total = op_monthly.get(key)
-        if op_total is None or op_total == 0:
-            return pd.NA, ""
+            return operating_standard, operating_formula
         if canonical == 2:
-            return _calculate_cooperation_standard(op_total, int(row[Col.YEAR]), int(row[Col.MONTH]))
-        std = int(round(op_total))
-        formula = f"운영기금 총액({int(op_total):,}) × 100%"
-        return std, formula
+            standard, formula = _calculate_cooperation_standard(operating_standard, year, month)
+            if source == 3:
+                formula = formula.replace("운영기금", "복지기금", 1)
+            return standard, formula
+        return operating_standard, operating_formula
 
     std_formula = missed.apply(_calc_standard, axis=1, result_type="expand")
     missed[Col.STANDARD] = std_formula[0]
     missed[Col.FORMULA] = std_formula[1]
-    missed[Col.DIFF] = pd.NA
+    missed[Col.DIFF] = missed[Col.STANDARD].apply(
+        lambda standard: -standard if pd.notna(standard) else pd.NA
+    )
     
     if ref_date:
         cutoff_serial = ref_date[0] * 12 + ref_date[1] - 2
