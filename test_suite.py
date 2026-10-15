@@ -549,8 +549,13 @@ class TestDataProcessorVerbose(unittest.TestCase):
         self.assertIn("preparation.invalidate()", reset_source)
 
         self.assertIn("pulse-icon", app_source, "pulse 아이콘 CSS 클래스가 app.py에 정의되어야 함")
-        self.assertIn("@keyframes icon-pulse", app_source, "pulse 애니메이션 keyframes가 app.py에 정의되어야 함")
-        self.assertIn("prefers-reduced-motion", app_source, "동작 줄이기 설정을 존중해야 함")
+        self.assertIn("animation: button-pulse", app_source, "준비 중 버튼 전체에 pulse 효과가 적용되어야 함")
+        self.assertIn("@keyframes button-pulse", app_source, "버튼 pulse 애니메이션 keyframes가 정의되어야 함")
+        self.assertIn(".q-btn.pulse-icon.disabled", app_source, "Quasar 비활성 버튼의 투명도를 명시적으로 덮어써야 함")
+        self.assertIn("button-pulse 1s", app_source, "준비 중 pulse는 1초 주기로 반복되어야 함")
+        self.assertIn("opacity: 1 !important", app_source, "비활성 상태에서도 준비 중 버튼이 선명해야 함")
+        self.assertIn("background-color: #3b41e3;", app_source, "버튼의 기존 배경색이 유지되어야 함")
+        self.assertNotIn("filter: brightness", app_source, "명암 변화가 글자까지 어둡게 해서는 안 됨")
         self.assertIn("aria-busy", app_source, "보조기기에 파일 준비 상태를 제공해야 함")
         self.assertIn("데이터 처리 중입니다", app_source)
         self.assertNotIn("데이터 처리 중입니다...", app_source)
@@ -671,9 +676,9 @@ class TestDataProcessorVerbose(unittest.TestCase):
 
         df_first = pd.DataFrame({Col.NAME: ["A"], Col.YEAR: [2021], Col.MONTH: [1]})
         df_errors = pd.DataFrame([
-            {Col.NAME: "A", Col.YEAR: 2021, Col.MONTH: 1, Col.FUND_NAME: FundName.COOPERATION, Col.CODE: "21", Col.STATUS: Status.EXCESS, Col.DIFF: 5000, Col.DEPOSIT: 45000, Col.STANDARD: 40000, Col.FORMULA: "", Col.PREV_MONTH_AMT: 0, Col.NEXT_MONTH_AMT: 0, Col.REMARKS: ""},
-            {Col.NAME: "A", Col.YEAR: 2021, Col.MONTH: 2, Col.FUND_NAME: FundName.WELFARE, Col.CODE: "31", Col.STATUS: Status.INSUFFICIENT, Col.DIFF: -7000, Col.DEPOSIT: 93000, Col.STANDARD: 100000, Col.FORMULA: "", Col.PREV_MONTH_AMT: 0, Col.NEXT_MONTH_AMT: 0, Col.REMARKS: ""},
-            {Col.NAME: "A", Col.YEAR: 2021, Col.MONTH: 3, Col.FUND_NAME: FundName.OPERATING, Col.CODE: "11~17", Col.STATUS: Status.UNPAID, Col.DIFF: pd.NA, Col.DEPOSIT: 0, Col.STANDARD: pd.NA, Col.FORMULA: "", Col.PREV_MONTH_AMT: 0, Col.NEXT_MONTH_AMT: 0, Col.REMARKS: ""},
+            {Col.NAME: "A", Col.YEAR: 2021, Col.MONTH: 1, Col.FUND_NAME: FundName.COOPERATION, Col.CODE: "21", Col.STATUS: Status.EXCESS, Col.ERROR_TARGET: "O", Col.DIFF: 5000, Col.DEPOSIT: 45000, Col.STANDARD: 40000, Col.FORMULA: "", Col.PREV_MONTH_AMT: 0, Col.NEXT_MONTH_AMT: 0, Col.UNPAID_3_MONTHS: ""},
+            {Col.NAME: "A", Col.YEAR: 2021, Col.MONTH: 2, Col.FUND_NAME: FundName.WELFARE, Col.CODE: "31", Col.STATUS: Status.INSUFFICIENT, Col.ERROR_TARGET: "O", Col.DIFF: -7000, Col.DEPOSIT: 93000, Col.STANDARD: 100000, Col.FORMULA: "", Col.PREV_MONTH_AMT: 0, Col.NEXT_MONTH_AMT: 0, Col.UNPAID_3_MONTHS: ""},
+            {Col.NAME: "A", Col.YEAR: 2021, Col.MONTH: 3, Col.FUND_NAME: FundName.OPERATING, Col.CODE: "11~17", Col.STATUS: Status.UNPAID, Col.ERROR_TARGET: "O", Col.DIFF: pd.NA, Col.DEPOSIT: 0, Col.STANDARD: pd.NA, Col.FORMULA: "", Col.PREV_MONTH_AMT: 0, Col.NEXT_MONTH_AMT: 0, Col.UNPAID_3_MONTHS: ""},
         ])
         df_summary = pd.DataFrame([{Col.NAME: "A", "미납": 1, "부족": 1, "초과": 1, "합계": 3}])
 
@@ -796,7 +801,7 @@ class TestDataProcessorVerbose(unittest.TestCase):
 
         df_first = pd.DataFrame({Col.NAME: ["=HYPERLINK(\"http://example.com\")"], Col.YEAR: [2021], Col.MONTH: [1]})
         df_errors = pd.DataFrame([
-            {Col.NAME: "=HYPERLINK(\"http://example.com\")", Col.YEAR: 2021, Col.MONTH: 1, Col.FUND_NAME: FundName.COOPERATION, Col.CODE: "21", Col.STATUS: Status.EXCESS, Col.DIFF: 5000, Col.DEPOSIT: 45000, Col.STANDARD: 40000, Col.FORMULA: "", Col.PREV_MONTH_AMT: 0, Col.NEXT_MONTH_AMT: 0, Col.REMARKS: ""},
+            {Col.NAME: "=HYPERLINK(\"http://example.com\")", Col.YEAR: 2021, Col.MONTH: 1, Col.FUND_NAME: FundName.COOPERATION, Col.CODE: "21", Col.STATUS: Status.EXCESS, Col.ERROR_TARGET: "O", Col.DIFF: 5000, Col.DEPOSIT: 45000, Col.STANDARD: 40000, Col.FORMULA: "", Col.PREV_MONTH_AMT: 0, Col.NEXT_MONTH_AMT: 0, Col.UNPAID_3_MONTHS: ""},
         ])
 
         excel_bytes, _ = data_processor.to_excel_bytes(

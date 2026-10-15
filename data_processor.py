@@ -26,6 +26,17 @@ def normalize_names(df: pd.DataFrame) -> pd.DataFrame:
 OPERATING_TARGET_CODE2 = {1, 2, 5, 6, 7}
 
 
+def _set_error_target(df: pd.DataFrame) -> pd.DataFrame:
+    status = df[Col.STATUS]
+    difference = pd.to_numeric(df[Col.DIFF], errors="coerce")
+    material_difference = (difference >= 1000) | (difference <= -1000)
+    target = (status == Status.UNPAID) | (
+        status.isin([Status.EXCESS, Status.INSUFFICIENT]) & material_difference
+    )
+    df[Col.ERROR_TARGET] = target.fillna(False).map({True: "O", False: ""})
+    return df
+
+
 def filter_error_detection_target_payments(df: pd.DataFrame) -> pd.DataFrame:
     """
     오류검출 대상 납부내역만 남긴다.
@@ -231,7 +242,8 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
         
     final_df = pd.concat(results).reset_index()
-    final_df[Col.REMARKS] = ""
+    final_df = _set_error_target(final_df)
+    final_df[Col.UNPAID_3_MONTHS] = ""
     final_df[Col.PREV_MONTH_AMT] = None
     final_df[Col.NEXT_MONTH_AMT] = None
     
@@ -266,7 +278,7 @@ def generate_missed_months(
     - 코드 2: 21이 없으면 미납.
     - 코드 3: 31이 없으면 미납.
     - 단, df_first(최초납부월 정보)가 주어지면, 해당 인원의 최초납부월 이전 데이터는 미납에서 제외한다.
-    - filename이 주어지면, 기준년월-3개월 이전의 미납에 "과거 미납분"을 비고에 표기한다.
+    - filename이 주어지면, 기준년월보다 3개월 이상 이전인 미납을 O로 표시한다.
     - graduation_names, end_year, end_month가 주어지면, 졸업생별로 최초납부월~기준년월까지의
       모든 월에 대해 미납을 검출한다 (원본 데이터에 없는 월도 포함).
     - 전제: df는 filter_error_detection_target_payments() 적용 후 데이터다.
@@ -468,18 +480,19 @@ def generate_missed_months(
     missed[Col.DIFF] = missed[Col.STANDARD].apply(
         lambda standard: -standard if pd.notna(standard) else pd.NA
     )
+    missed = _set_error_target(missed)
     
     if ref_date:
         cutoff_serial = ref_date[0] * 12 + ref_date[1] - 2
         if "serial" not in missed.columns:
             missed["serial"] = missed[Col.YEAR] * 12 + missed[Col.MONTH]
-        missed[Col.REMARKS] = missed.apply(
-            lambda row: "3개월 이전 미납분" if row["serial"] < cutoff_serial else "",
+        missed[Col.UNPAID_3_MONTHS] = missed.apply(
+            lambda row: "O" if row["serial"] < cutoff_serial else "",
             axis=1
         )
         missed = missed.drop(columns=["serial"])
     else:
-        missed[Col.REMARKS] = ""
+        missed[Col.UNPAID_3_MONTHS] = ""
     missed[Col.PREV_MONTH_AMT] = None
     missed[Col.NEXT_MONTH_AMT] = None
     
@@ -542,6 +555,21 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
             cols = [c for c in cols if c not in exclude_cols]
         return df[cols]
 
+    def prepare_error_result_sheet(df):
+        result = prepare_sheet(df)
+        if result is None:
+            return None
+
+        result = result.copy()
+        if Col.ERROR_TARGET not in result.columns:
+            result = _set_error_target(result)
+        if Col.UNPAID_3_MONTHS not in result.columns:
+            legacy_remarks = result.get("비고", pd.Series("", index=result.index))
+            result[Col.UNPAID_3_MONTHS] = legacy_remarks.eq("3개월 이전 미납분").map(
+                {True: "O", False: ""}
+            )
+        return result.reindex(columns=RESULT_COLUMNS)
+
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:  # type: ignore[arg-type]
         thin_border = Border(
             left=Side(style='thin', color='FF9CA3AF'),
@@ -557,32 +585,36 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
         )
 
         # 1. 오류검출결과 시트 (사용자 요청으로 앞에 위치)
-        df_e = prepare_sheet(df_errors)
+        df_e = prepare_error_result_sheet(df_errors)
         if df_e is not None:
             df_e.index = range(1, len(df_e) + 1)
             df_e.to_excel(writer, index=True, index_label="번호", sheet_name=SheetName.ERROR_RESULT)
             ws = writer.sheets[SheetName.ERROR_RESULT]
             
-            # 컬럼 너비 설정 (비율 조정: 80/110 ≈ 0.727)
-            # A: 번호 (80px), B: 이름 (100px), C-E: 기본 (90px)
-            # F: 코드 (80px), G,I,K: 납부금액/기준금액/차액 (110px)
-            # A: 번호, B: 이름, C-D: 납부년월, E: 기금명, F: 코드
-            # G: 상태, H: 차액, I-J: 납부/기준금액, K: 산출법
-            # L-M: 전/익월, N: 비고
-            ws.column_dimensions["A"].width = 8   # 번호
-            ws.column_dimensions["B"].width = 10  # 이름
-            ws.column_dimensions["C"].width = 9   # 납부년
-            ws.column_dimensions["D"].width = 9   # 납부월
-            ws.column_dimensions["E"].width = 9   # 기금명
-            ws.column_dimensions["F"].width = 8   # 코드
-            ws.column_dimensions["G"].width = 12  # 상태
-            ws.column_dimensions["H"].width = 12  # 차액
-            ws.column_dimensions["I"].width = 12  # 납부금액
-            ws.column_dimensions["J"].width = 12  # 기준금액
-            ws.column_dimensions["K"].width = 26  # 기준금액 산출법
-            ws.column_dimensions["L"].width = 14  # 전월납부금액
-            ws.column_dimensions["M"].width = 14  # 익월납부금액
-            ws.column_dimensions["N"].width = 41  # 비고
+            column_numbers = {cell.value: cell.column for cell in ws[1]}
+
+            def column_letter(name):
+                return get_column_letter(column_numbers[name])
+
+            column_widths = {
+                "번호": 8,
+                Col.NAME: 10,
+                Col.YEAR: 9,
+                Col.MONTH: 9,
+                Col.FUND_NAME: 9,
+                Col.CODE: 8,
+                Col.STATUS: 12,
+                Col.ERROR_TARGET: 11,
+                Col.DIFF: 12,
+                Col.DEPOSIT: 12,
+                Col.STANDARD: 12,
+                Col.FORMULA: 26,
+                Col.PREV_MONTH_AMT: 14,
+                Col.NEXT_MONTH_AMT: 14,
+                Col.UNPAID_3_MONTHS: 18,
+            }
+            for name, width in column_widths.items():
+                ws.column_dimensions[column_letter(name)].width = width
             
             # 오토필터 및 정렬/포맷팅
             last_col = get_column_letter(len(df_e.columns) + 1)
@@ -599,8 +631,6 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
                 cell.alignment = header_align
                 cell.border = thick_bottom_border
 
-            fills = {}
-
             year_month_fill = PatternFill(start_color="FFD4E3F8", end_color="FFD4E3F8", fill_type="solid")
             adjacent_month_fill = PatternFill(start_color="FFE0F2F1", end_color="FFE0F2F1", fill_type="solid")
             fund_fills = {
@@ -611,29 +641,28 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
             even_row_fill = PatternFill(start_color="FFF5F3F4", end_color="FFF5F3F4", fill_type="solid")
             default_font = Font(color="FF000000", size=10)
 
-            # 헤더에 배경색 및 두꺼운 하단 테두리 적용
-            for cell in ws[1]:
-                col_idx_zero = cell.col_idx - 1
-                if col_idx_zero in fills:
-                    cell.fill = fills[col_idx_zero]
-                cell.border = thick_bottom_border
-
             last_data_row = len(df_e) + 1
 
             ws.conditional_formatting.add(
-                f"C2:D{last_data_row}",
+                f"{column_letter(Col.YEAR)}2:{column_letter(Col.MONTH)}{last_data_row}",
                 FormulaRule(formula=['TRUE'], fill=year_month_fill)
             )
             ws.conditional_formatting.add(
-                f"L2:M{last_data_row}",
+                f"{column_letter(Col.PREV_MONTH_AMT)}2:{column_letter(Col.NEXT_MONTH_AMT)}{last_data_row}",
                 FormulaRule(formula=['TRUE'], fill=adjacent_month_fill)
             )
             for fund_name, fund_fill in fund_fills.items():
+                fund_column = column_letter(Col.FUND_NAME)
                 ws.conditional_formatting.add(
-                    f"E2:E{last_data_row}",
-                    FormulaRule(formula=[f'$E2="{fund_name}"'], fill=fund_fill)
+                    f"{fund_column}2:{fund_column}{last_data_row}",
+                    FormulaRule(formula=[f'${fund_column}2="{fund_name}"'], fill=fund_fill)
                 )
-            for alt_range in [f"A2:B{last_data_row}", f"F2:K{last_data_row}", f"N2:N{last_data_row}"]:
+            alternate_ranges = [
+                f"A2:{column_letter(Col.NAME)}{last_data_row}",
+                f"{column_letter(Col.CODE)}2:{column_letter(Col.FORMULA)}{last_data_row}",
+                f"{column_letter(Col.UNPAID_3_MONTHS)}2:{column_letter(Col.UNPAID_3_MONTHS)}{last_data_row}",
+            ]
+            for alt_range in alternate_ranges:
                 ws.conditional_formatting.add(
                     alt_range,
                     FormulaRule(formula=['MOD(SUBTOTAL(3,$A$2:$A2),2)=0'], fill=even_row_fill)
@@ -642,14 +671,12 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
             for row in ws.iter_rows(min_row=2, max_row=last_data_row):
                 excel_row_num = row[0].row
 
-                for idx, cell in enumerate(row):
+                for cell in row:
+                    column_name = ws.cell(row=1, column=cell.column).value
                     cell.font = default_font
                     cell.border = thin_border
 
-                    if idx == 5:
-                        pass
-
-                    if idx == 6:
+                    if column_name == Col.STATUS:
                         status_value = str(cell.value).strip() if cell.value else ""
                         if status_value == "미납":
                             cell.font = Font(color='FF9CA3AF', bold=True)
@@ -661,8 +688,8 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
                             cell.font = Font(color='FF059669', bold=True)
                             cell.value = "▲ 초과"
 
-                    if idx == 7:
-                        status_cell = ws.cell(row=excel_row_num, column=7)
+                    if column_name == Col.DIFF:
+                        status_cell = ws.cell(row=excel_row_num, column=column_numbers[Col.STATUS])
                         status_value = str(status_cell.value).strip() if status_cell.value else ""
                         if "미납" in status_value:
                             cell.font = Font(color='FF9CA3AF', bold=True)
@@ -673,25 +700,23 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
                         if cell.value is not None and isinstance(cell.value, (int, float)):
                             cell.number_format = '+#,##0;-#,##0;0'
 
-                    if idx in [8, 9]:
-                        cell.alignment = Alignment(horizontal="right")
+                    if column_name in [Col.DEPOSIT, Col.STANDARD]:
                         if cell.value is not None:
                             cell.number_format = "#,##0"
 
-                    if idx in [11, 12]:
-                        cell.alignment = Alignment(horizontal="right")
+                    if column_name in [Col.PREV_MONTH_AMT, Col.NEXT_MONTH_AMT]:
                         if cell.value is not None and isinstance(cell.value, (int, float)):
                             cell.number_format = "#,##0"
 
-                    if idx <= 5:
-                        cell.alignment = Alignment(horizontal="center")
-                    elif idx == 6:
-                        cell.alignment = Alignment(horizontal="center")
-                    elif idx == 7:
+                    if column_name in [
+                        Col.DIFF,
+                        Col.DEPOSIT,
+                        Col.STANDARD,
+                        Col.PREV_MONTH_AMT,
+                        Col.NEXT_MONTH_AMT,
+                    ]:
                         cell.alignment = Alignment(horizontal="right")
-                    elif idx in [8, 9]:
-                        cell.alignment = Alignment(horizontal="right")
-                    elif idx == 10:
+                    elif column_name == Col.FORMULA:
                         cell.alignment = Alignment(horizontal="left")
                     else:
                         cell.alignment = Alignment(horizontal="center")

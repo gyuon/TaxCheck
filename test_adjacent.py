@@ -49,7 +49,7 @@ def make_raw(rows):
 def make_error(rows):
     return pd.DataFrame(rows, columns=[Col.NAME, Col.YEAR, Col.MONTH, Col.FUND_NAME, Col.CODE,
                                         Col.DEPOSIT, Col.STANDARD, Col.FORMULA, Col.STATUS, Col.DIFF,
-                                        Col.PREV_MONTH_AMT, Col.NEXT_MONTH_AMT, Col.REMARKS])
+                                        Col.PREV_MONTH_AMT, Col.NEXT_MONTH_AMT, Col.UNPAID_3_MONTHS])
 
 
 def test(name, df_errors, df_raw, check_fn):
@@ -77,7 +77,7 @@ df_r = make_raw([
     {Col.NAME: "UserA", Col.YEAR: 2026, Col.MONTH: 2, Col.CODE1: 1, Col.CODE2: 1, Col.RAW_DEPOSIT: 60000},
 ])
 if test("운영기금 초과 - 전후달 존재 (코드1=1 합산)", df_e, df_r,
-       lambda r: r[Col.PREV_MONTH_AMT].tolist() == [70000] and r[Col.NEXT_MONTH_AMT].tolist() == [60000] and r[Col.REMARKS].tolist() == [""]):
+       lambda r: r[Col.PREV_MONTH_AMT].tolist() == [70000] and r[Col.NEXT_MONTH_AMT].tolist() == [60000] and r[Col.UNPAID_3_MONTHS].tolist() == [""]):
     passed += 1
 
 total += 1
@@ -116,7 +116,7 @@ df_r = make_raw([
     {Col.NAME: "UserD", Col.YEAR: 2025, Col.MONTH: 12, Col.CODE1: 1, Col.CODE2: 1, Col.RAW_DEPOSIT: 70000},
 ])
 if test("미납은 전/익월 컬럼 수정 안함", df_e, df_r,
-       lambda r: r[Col.PREV_MONTH_AMT].tolist() == [None] and r[Col.NEXT_MONTH_AMT].tolist() == [None] and r[Col.REMARKS].tolist() == ["기존비고"]):
+       lambda r: r[Col.PREV_MONTH_AMT].tolist() == [None] and r[Col.NEXT_MONTH_AMT].tolist() == [None] and r[Col.UNPAID_3_MONTHS].tolist() == ["기존비고"]):
     passed += 1
 
 total += 1

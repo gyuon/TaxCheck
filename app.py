@@ -43,9 +43,8 @@ async def index():
         '<style>'
         "body { background-color: #f9fafb; font-family: 'Inter', 'Pretendard', sans-serif; }"
         ".nicegui-content { padding: 0 !important; }"
-        ".pulse-icon .q-icon { animation: icon-pulse 1.2s ease-in-out infinite; }"
-        "@keyframes icon-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.65; transform: scale(1.14); } }"
-        "@media (prefers-reduced-motion: reduce) { .pulse-icon .q-icon { animation: none; } }"
+        ".q-btn.pulse-icon.disabled { opacity: 1 !important; cursor: wait; animation: button-pulse 1s ease-in-out infinite; }"
+        "@keyframes button-pulse { 0%, 100% { background-color: #3b41e3; } 50% { background-color: #7b80f5; } }"
         "</style>"
     )
 
@@ -596,7 +595,8 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
         download_button = ui.button(
             initial_presentation.text,
             icon=initial_presentation.icon,
-        ).props("size=md unelevated").style("background-color: #3b41e3 !important; color: white; font-size: 14px; border-radius: 8px;").classes("w-full max-w-xs")
+            color=None,
+        ).props("size=md unelevated").style("background-color: #3b41e3; color: white; opacity: 1 !important; font-size: 14px; border-radius: 8px;").classes("w-full max-w-xs")
 
         def update_download_button():
             presentation = preparation.presentation
