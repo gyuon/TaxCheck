@@ -37,6 +37,38 @@ def _set_error_target(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def summarize_review_targets(df_errors: pd.DataFrame) -> dict:
+    summary = {
+        "target_count": 0,
+        "person_count": 0,
+        "long_unpaid_count": 0,
+        "counts": {status: 0 for status in [Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]},
+    }
+    if df_errors.empty:
+        return summary
+
+    errors = df_errors.copy()
+    if Col.ERROR_TARGET not in errors.columns:
+        errors = _set_error_target(errors)
+    targets = errors.loc[errors[Col.ERROR_TARGET].eq("O").fillna(False)]
+
+    summary["target_count"] = len(targets)
+    summary["person_count"] = int(targets[Col.NAME].nunique())
+    summary["counts"] = {
+        status: int(targets[Col.STATUS].eq(status).sum())
+        for status in [Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]
+    }
+    if Col.UNPAID_3_MONTHS in targets.columns:
+        long_unpaid = targets[Col.UNPAID_3_MONTHS].eq("O")
+    else:
+        legacy_remarks = targets.get("비고", pd.Series("", index=targets.index))
+        long_unpaid = legacy_remarks.eq("3개월 이전 미납분")
+    summary["long_unpaid_count"] = int(
+        (targets[Col.STATUS].eq(Status.UNPAID) & long_unpaid.fillna(False)).sum()
+    )
+    return summary
+
+
 def filter_error_detection_target_payments(df: pd.DataFrame) -> pd.DataFrame:
     """
     오류검출 대상 납부내역만 남긴다.
@@ -53,7 +85,7 @@ def filter_error_detection_target_payments(df: pd.DataFrame) -> pd.DataFrame:
 
 def get_google_sheets_title(url: str) -> str | None:
     """
-    구글 시트 URL에서 제목을 추출한다.
+    구글 시트 제목 또는 필수 컬럼이 확인된 CSV의 기본 표시명을 반환한다.
     """
     try:
         if "/edit" in url:
@@ -69,6 +101,10 @@ def get_google_sheets_title(url: str) -> str | None:
             title = title_match.group(1)
             title = title.replace(" - Google Sheets", "").replace(" - Google スプレッドシート", "")
             return title.strip()
+
+        columns = pd.read_csv(BytesIO(response.content), nrows=0).columns
+        if {"이름", "구분"}.issubset(columns):
+            return "졸업생 명단"
 
         return None
     except Exception:
