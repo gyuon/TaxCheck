@@ -9,6 +9,7 @@ from data_processor import (
     normalize_names,
     extract_date_from_filename,
     filter_error_detection_target_payments,
+    summarize_review_targets,
 )
 from constants import Col, Status
 from excel_preparation import ExcelPreparation, ExcelPreparationStatus
@@ -28,6 +29,81 @@ load_dotenv()
 DEFAULT_GSHEET_URL = os.environ.get("GSHEET_URL", "")
 
 PROJECT_DIR = Path(__file__).parent
+app.add_static_files("/fonts", PROJECT_DIR / "assets" / "fonts")
+
+RESULT_MAIN_CLASSES = (
+    "result-main w-full max-w-[42rem] mx-auto my-auto p-5 md:p-6 gap-3 "
+    "bg-white rounded-[2rem] shadow-sm hover:shadow-md transition-shadow"
+)
+
+APP_VIEW_CSS = """
+@font-face {
+    font-family: 'Pretendard Variable'; font-style: normal; font-weight: 100 900; font-display: swap;
+    src: url('/fonts/PretendardVariable.woff2') format('woff2');
+}
+:root { --app-font-family: 'Pretendard Variable', Pretendard, sans-serif; }
+body { background-color: #f9fafb; font-family: var(--app-font-family); }
+button, input, textarea, select, .q-btn, .q-field, .q-tooltip, .q-notification {
+    font-family: var(--app-font-family);
+}
+.app-shell { width: 100%; min-height: 100vh; padding: 24px; display: flex; }
+.app-frame { width: 100%; max-width: 42rem; margin: auto; display: flex; flex-direction: column; gap: 12px; }
+.app-version-footer { width: 100%; text-align: center; color: #887589; font-size: 13px;
+    line-height: 18px; font-weight: 400; font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) { .app-shell { padding: 16px; } }
+"""
+
+INITIAL_VIEW_CSS = """
+.initial-main { width: 100%; max-width: 42rem; margin: auto; padding: 28px;
+    gap: 18px; align-items: stretch; background: white; border: 1px solid #dce1e8; border-radius: 8px; }
+.initial-header { min-height: 52px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.initial-title { font-size: 24px; line-height: 1.35; font-weight: 700; color: #18212d; word-break: keep-all; }
+.initial-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.initial-upload-section { grid-column: 1; grid-row: 1 / span 2; min-width: 0; gap: 0; }
+.initial-input-card { width: 100%; min-width: 0; padding: 20px; border: 1px solid #dce3ed;
+    border-radius: 6px; background: #f8fafc; color: #18212d; font: inherit; text-align: left; }
+.initial-upload-card { position: relative; height: 238px; cursor: pointer; border-style: dashed;
+    display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; }
+.initial-card-title { font-size: 16px; line-height: 1.5; font-weight: 600; }
+.initial-upload-body { position: absolute; inset: 0 16px; padding-top: 48px; display: grid;
+    grid-template-rows: 40px 66px; align-content: center; justify-items: center; align-items: center; gap: 6px; }
+.initial-upload-info { width: 100%; min-width: 0; display: flex; flex-direction: column;
+    align-items: center; align-self: start; gap: 4px; }
+.initial-upload-caption { max-width: 100%; text-align: center; font-size: 16px; line-height: 22px;
+    color: #718096; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; overflow: hidden; }
+.initial-upload-card.is-ready .initial-upload-caption { color: #18212d; font-weight: 600; }
+.initial-upload-size { max-width: 100%; text-align: center; font-size: 14px; line-height: 18px; color: #8793a5; }
+.initial-input-card.is-ready { background: #effbf3; border-color: #9edcb1; border-style: solid; }
+.initial-status-icon { flex-shrink: 0; color: #4caf50; }
+.initial-upload-icon { color: #94a3b8; }
+.initial-period-card, .initial-sheet-card { height: 109px; min-height: 109px; padding: 16px 20px;
+    display: flex; align-items: center; gap: 16px; }
+.initial-period-card { cursor: pointer; }
+.initial-period-icon { flex-shrink: 0; color: #94a3b8; }
+.initial-card-copy { min-width: 0; gap: 4px; }
+.initial-card-subtitle { max-width: 100%; color: #718096; font-size: 14px; line-height: 18px; overflow-wrap: anywhere; }
+.initial-sheet-section { width: 100%; min-width: 0; gap: 0; }
+.initial-sheet-card.is-failed { background: #fff5f5; border-color: #f0b4b4; }
+.initial-sheet-card.is-failed .initial-status-icon { color: #d95151; }
+.initial-sheet-card.is-failed .initial-card-subtitle { color: #b84444; }
+.initial-sheet-card.is-loading .initial-status-icon { color: #8793a5; }
+.initial-sheet-retry { color: #b84444; font-size: 13px; min-height: 24px; padding: 0 4px; }
+.initial-upload-card:hover, .initial-period-card:hover { border-color: #8186e8; }
+.initial-upload-card:focus-visible, .initial-period-card:focus-visible { outline: 2px solid #6368dc; outline-offset: 3px; }
+.initial-analyze { width: 100%; min-height: 56px; border-radius: 6px; font-size: 16px;
+    background-color: #3b41e3; color: white; }
+.initial-analyze.q-btn.disabled { background-color: #b4bdca !important; color: white !important; opacity: 1 !important; }
+.initial-period-dialog { width: 28rem; max-width: calc(100vw - 32px); padding: 24px; }
+@media (max-width: 600px) {
+    .initial-main { padding: 20px; gap: 20px; }
+    .initial-title { font-size: 24px; }
+    .initial-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    .initial-upload-section { grid-column: auto; grid-row: auto; }
+    .initial-upload-card { height: 220px; }
+    .initial-period-card, .initial-sheet-card { height: 96px; min-height: 96px; padding: 16px; }
+}
+"""
 
 
 def _get_version() -> str:
@@ -37,24 +113,29 @@ def _get_version() -> str:
         return "N/A"
 
 
+def render_version_footer():
+    with ui.element("footer").classes("app-version-footer"):
+        ui.label(f"v{_get_version()}")
+
+
 @ui.page("/")
 async def index():
     ui.add_head_html(
+        '<link rel="preload" href="/fonts/PretendardVariable.woff2" as="font" type="font/woff2" crossorigin>'
         '<style>'
-        "body { background-color: #f9fafb; font-family: 'Inter', 'Pretendard', sans-serif; }"
+        + APP_VIEW_CSS +
         ".nicegui-content { padding: 0 !important; }"
         ".q-btn.pulse-icon.disabled { opacity: 1 !important; cursor: wait; animation: button-pulse 1s ease-in-out infinite; }"
         "@keyframes button-pulse { 0%, 100% { background-color: #3b41e3; } 50% { background-color: #7b80f5; } }"
-        "</style>"
+        + INITIAL_VIEW_CSS + "</style>"
     )
 
     is_result = app.storage.user.get("result_ready")
 
-    with ui.element("div").classes("w-full min-h-[calc(100vh-2rem)] flex flex-col items-center"):
-        main = ui.column().classes(
-            "w-full max-w-[42rem] mx-auto my-auto p-5 md:p-9 "
-            "bg-white rounded-[2rem] shadow-sm hover:shadow-md transition-shadow"
-        )
+    with ui.element("div").classes("app-shell"):
+        with ui.element("div").classes("app-frame"):
+            main = ui.column().classes(RESULT_MAIN_CLASSES if is_result else "initial-main")
+            render_version_footer()
 
     if is_result:
         with main:
@@ -66,142 +147,135 @@ async def index():
         "gsheet_url": DEFAULT_GSHEET_URL,
         "start_year": 2013,
         "end_year": datetime.now().year,
+        "gsheet_ready": False,
     }
+    analyze_button = None
+
+    def update_analyze_button():
+        if analyze_button is not None:
+            analyze_button.set_enabled(bool(file_state["bytes"]) and settings["gsheet_ready"])
 
     with main:
-        ui.label("인별납부내역 오류검출").classes(
-            "text-3xl font-bold text-center text-slate-800 mb-0 w-full"
-        )
-        ui.label(f"v{_get_version()}").classes(
-            "text-sm text-slate-400 text-center w-full"
-        ).style("margin-bottom: 0.2rem")
+        with ui.element("header").classes("initial-header"):
+            ui.label("인별납부내역 오류검출").classes("initial-title")
 
-        upload_section = ui.column().classes("w-full mb-2")
-        with upload_section:
-            render_upload_content(file_state, upload_section)
-
-        render_gsheet_card(settings)
-        render_period_card(settings)
+        with ui.element("div").classes("initial-grid"):
+            upload_section = ui.column().classes("initial-upload-section")
+            with upload_section:
+                render_upload_content(file_state, upload_section, update_analyze_button)
+            render_period_card(settings)
+            render_gsheet_card(settings, update_analyze_button)
 
         async def on_analyze():
             await analyze(file_state, settings, main)
 
-        ui.button(
+        analyze_button = ui.button(
             "분석 실행",
             on_click=on_analyze,
             icon="play_arrow",
-        ).props("size=lg unelevated").style(
-            "background-color: #3b41e3 !important; color: white; font-size: 15px; border-radius: 8px; padding-top: 1rem; padding-bottom: 1rem;"
-        ).classes("w-full mt-3")
+            color=None,
+        ).props("unelevated no-caps").classes("initial-analyze")
+        update_analyze_button()
 
 
-def render_upload_content(file_state, parent):
-    if file_state["bytes"]:
-        size_kb = len(file_state["bytes"]) / 1024
-        size_str = f"{size_kb:,.1f} KB" if size_kb < 1024 else f"{size_kb / 1024:,.1f} MB"
-        card = ui.element("div").classes(
-            "w-full border-2 border-solid border-green-200 bg-green-50 "
-            "rounded-xl p-4 h-[142.7px] flex flex-col items-center justify-center gap-2 "
-            "cursor-pointer hover:border-blue-400 hover:bg-green-100/60 transition-all"
-        )
-        with card:
-            ui.icon("check_circle", size="28px", color="green")
-            with ui.column().classes("items-center gap-0"):
-                ui.label(file_state["name"]).classes("text-slate-800 font-semibold text-[15px]")
-                ui.label(size_str).classes("text-slate-400 text-sm")
-            ui.label("다시 업로드").classes("text-slate-500 text-sm underline")
-    else:
-        card = ui.element("div").classes(
-            "w-full border-2 border-dashed border-slate-200 bg-slate-50/50 rounded-xl "
-            "h-[142.7px] flex flex-col items-center justify-center gap-2 cursor-pointer "
-            "hover:border-blue-400 hover:bg-blue-50 transition-all"
-        )
-        with card:
-            ui.icon("cloud_upload", size="28px").classes("text-slate-400")
-            ui.label("클릭하여 업로드 (.xlsx)").classes("text-slate-500 text-[15px]")
+def render_upload_content(file_state, parent, on_change=None):
+    uploaded = bool(file_state["bytes"])
+    card = ui.element("button").classes(
+        "initial-input-card initial-upload-card" + (" is-ready" if uploaded else "")
+    ).props(f'type=button aria-label="납부내역 파일 {"다시 업로드" if uploaded else "업로드"}"')
+    with card:
+        ui.label("납부내역 파일").classes("initial-card-title")
+        with ui.element("div").classes("initial-upload-body"):
+            ui.icon(
+                "check_circle" if uploaded else "cloud_upload",
+                size="36px",
+            ).classes("initial-status-icon" if uploaded else "initial-upload-icon")
+            with ui.element("div").classes("initial-upload-info"):
+                caption = ui.label(
+                    file_state["name"] if uploaded else "클릭하여 업로드 (.xlsx)"
+                ).classes("initial-upload-caption")
+                if uploaded:
+                    caption.tooltip(file_state["name"])
+                    size_kb = len(file_state["bytes"]) / 1024
+                    size_text = f"{size_kb:,.1f} KB" if size_kb < 1024 else f"{size_kb / 1024:,.1f} MB"
+                    ui.label(size_text).classes("initial-upload-size")
 
     uploader = ui.upload(
         auto_upload=True,
-        on_upload=lambda e: on_file_uploaded(e, file_state, parent),
+        on_upload=lambda e: on_file_uploaded(e, file_state, parent, on_change),
     ).props('accept=".xlsx"').classes("hidden")
 
     card.on("click", lambda: uploader.run_method("pickFiles"))
 
 
-async def on_file_uploaded(e: UploadEventArguments, file_state, parent):
+async def on_file_uploaded(e: UploadEventArguments, file_state, parent, on_change=None):
     file_state["bytes"] = await e.file.read()
     file_state["name"] = e.file.name
     if parent:
         parent.clear()
         with parent:
-            render_upload_content(file_state, parent)
+            render_upload_content(file_state, parent, on_change)
+    if on_change is not None:
+        on_change()
 
 
-def render_gsheet_card(settings):
-    container = ui.column().classes("w-full mb-2")
+def render_gsheet_card(settings, on_change=None):
+    container = ui.column().classes("initial-sheet-section")
 
-    def _render():
+    def render(title=None, loading=False):
         container.clear()
+        configured = bool(settings["gsheet_url"])
+        state = "is-loading" if loading else "is-ready" if title else "is-failed"
         with container:
-            url = settings["gsheet_url"]
-
-            if not url:
-                ui.element("div").classes(
-                    "w-full border-2 border-dashed border-slate-200 bg-slate-50/50 rounded-xl "
-                    "h-[142.7px] flex flex-col items-center justify-center gap-2"
-                )
-                with ui.element("div"):
-                    ui.icon("table_chart", size="28px").classes("text-slate-400")
-                    ui.label("GSHEET_URL이 설정되지 않았습니다").classes(
-                        "text-slate-400 text-[15px]"
+            with ui.element("div").classes(f"initial-input-card initial-sheet-card {state}"):
+                if loading:
+                    ui.spinner(size="36px").classes("initial-status-icon")
+                else:
+                    ui.icon("check_circle" if title else "error", size="36px").classes("initial-status-icon")
+                with ui.column().classes("initial-card-copy"):
+                    ui.label("졸업생 명단").classes("initial-card-title")
+                    subtitle = (
+                        "명단을 불러오는 중" if loading else title if title else
+                        "명단을 불러오지 못했습니다" if configured else "GSHEET_URL이 설정되지 않았습니다"
                     )
-                return
+                    ui.label(subtitle).classes("initial-card-subtitle")
+                    if configured and not title and not loading:
+                        ui.button("다시 연결", icon="refresh", on_click=refresh, color=None).props(
+                            "flat dense no-caps"
+                        ).classes("initial-sheet-retry")
 
-            title = get_google_sheets_title(url)
+    async def refresh():
+        settings["gsheet_ready"] = False
+        render(loading=True)
+        if on_change is not None:
+            on_change()
+        title = await run.io_bound(get_google_sheets_title, settings["gsheet_url"])
+        settings["gsheet_ready"] = bool(title)
+        render(title=title)
+        if on_change is not None:
+            on_change()
 
-            if title:
-                with ui.element("div").classes(
-                    "w-full border-2 border-solid border-green-200 bg-green-50 "
-                    "rounded-xl p-4 h-[142.7px] flex flex-col items-center justify-center gap-2 "
-                    "transition-all"
-                ):
-                    ui.icon("check_circle", size="28px", color="green")
-                    with ui.column().classes("items-center gap-0"):
-                        ui.label("졸업생 명단").classes("text-slate-800 font-semibold text-[15px]")
-                        ui.label(title).classes("text-slate-400 text-sm")
-            else:
-                with ui.element("div").classes(
-                    "w-full border-2 border-solid border-red-200 bg-red-50 "
-                    "rounded-xl p-4 h-[142.7px] flex flex-col items-center justify-center gap-2 "
-                    "cursor-pointer hover:border-red-400 hover:bg-red-100/60 transition-all"
-                ) as card:
-                    ui.icon("error", size="28px", color="red")
-                    with ui.column().classes("items-center gap-0"):
-                        ui.label("졸업생 명단").classes("text-slate-800 font-semibold text-[15px]")
-                        ui.label("연결 실패. 다시 시도하려면 클릭하세요").classes(
-                            "text-red-600 text-sm text-center"
-                        )
-                card.on("click", lambda: _render())
-
-    _render()
+    settings["gsheet_ready"] = False
+    render(loading=bool(settings["gsheet_url"]))
+    if settings["gsheet_url"]:
+        ui.timer(0.1, refresh, once=True)
 
 
 def render_period_card(settings):
     cur_year = datetime.now().year
-    with ui.card().classes(
-        "w-full p-4 flex flex-col items-center cursor-pointer hover:scale-[1.01] transition-transform"
+    with ui.element("button").props('type=button aria-label="분석 기간 설정"').classes(
+        "initial-input-card initial-period-card"
     ) as card:
-        with ui.element("div").classes("bg-slate-50 p-2 rounded-lg shrink-0 mb-0.5"):
-            ui.icon("event", size="24px").classes("text-slate-600")
-        with ui.column().classes("gap-0 items-center"):
-            ui.label("분석 기간").classes("text-slate-800 font-semibold text-base text-center")
+        ui.icon("event", size="36px").classes("initial-period-icon")
+        with ui.column().classes("initial-card-copy"):
+            ui.label("분석 기간").classes("initial-card-title")
             period_subtitle = ui.label(
-                f"{settings['start_year']}년부터 {settings['end_year']}년까지"
-            ).classes("text-slate-500 text-[15px] text-center")
+                f"{settings['start_year']}년 ~ {settings['end_year']}년"
+            ).classes("initial-card-subtitle")
 
     async def open_dialog():
         with ui.dialog().classes("rounded-xl") as dialog:
-            with ui.card().classes("min-w-[28rem] p-6"):
+            with ui.card().classes("initial-period-dialog"):
                 ui.label("분석 기간 설정").classes("text-lg font-semibold mb-4")
                 with ui.row().classes("w-full gap-4"):
                     start_input = ui.number(
@@ -210,23 +284,29 @@ def render_period_card(settings):
                         min=2000,
                         max=cur_year,
                         step=1,
-                    )
+                    ).classes("flex-1 min-w-0")
                     end_input = ui.number(
                         "종료 년도",
                         value=settings["end_year"],
                         min=2000,
                         max=cur_year + 10,
                         step=1,
-                    )
+                    ).classes("flex-1 min-w-0")
                 with ui.row().classes("w-full justify-end gap-2 mt-4"):
                     ui.button("취소", on_click=dialog.close).props("outline")
                     ui.button("저장", on_click=lambda: save()).props("unelevated")
 
         def save():
+            if start_input.value is None or end_input.value is None:
+                ui.notify("시작 년도와 종료 년도를 입력하세요.", type="warning")
+                return
+            if start_input.value > end_input.value:
+                ui.notify("시작 년도는 종료 년도보다 클 수 없습니다.", type="warning")
+                return
             settings["start_year"] = int(start_input.value)
             settings["end_year"] = int(end_input.value)
             period_subtitle.set_text(
-                f"{settings['start_year']}년부터 {settings['end_year']}년까지"
+                f"{settings['start_year']}년 ~ {settings['end_year']}년"
             )
             dialog.close()
 
@@ -240,6 +320,7 @@ async def analyze(file_state, settings, main):
         ui.notify("원본 엑셀과 Google Sheets URL을 입력하세요.", type="warning")
         return
 
+    main.classes(remove="initial-main", add=RESULT_MAIN_CLASSES)
     main.clear()
     with main:
         with ui.column().classes("w-full p-12 flex flex-col items-center"):
@@ -265,7 +346,7 @@ async def analyze(file_state, settings, main):
                 ui.label(f"오류 발생: {e}").classes("text-red-500")
                 with ui.expansion("기술적 상세 정보"):
                     ui.label(traceback.format_exc()).classes(
-                        "text-xs text-slate-400 font-mono whitespace-pre-wrap"
+                        "text-xs text-slate-400 whitespace-pre-wrap"
                     )
         except RuntimeError:
             print("[ERROR] RuntimeError: UI 업데이트 실패 (클라이언트 연결 끊김 가능성)")
@@ -577,18 +658,86 @@ def build_result_view_from_storage():
 
 
 def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view=None):
-    counts = summary["counts"]
-    c_miss = counts.get(Status.UNPAID, 0)
-    c_under = counts.get(Status.INSUFFICIENT, 0)
-    c_over = counts.get(Status.EXCESS, 0)
-    total_errors = sum(counts.values())
+    review = summarize_review_targets(df_errors)
     duration = summary["duration"]
     period_count = summary["period_count"]
     c_filt = summary["filtered_count"]
 
-    ui.label("분석 결과").classes("text-2xl font-bold text-slate-800 text-center w-full mb-4")
+    ui.label("분석 결과").classes("text-2xl font-bold text-slate-800 text-center w-full")
 
-    with ui.column().classes("w-full items-center gap-3 mb-8"):
+    with ui.element("div").classes("result-summary w-full border border-slate-200"):
+        with ui.element("dl").classes("grid grid-cols-2 divide-x divide-slate-200 m-0"):
+            for label, value, unit in [
+                ("오류 대상", review["target_count"], "건"),
+                ("대상자", review["person_count"], "명"),
+            ]:
+                with ui.element("div").classes("min-w-0 text-center"):
+                    with ui.element("dt").classes(
+                        "bg-slate-100 border-b border-slate-200 px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-600"
+                    ):
+                        ui.label(label)
+                    with ui.element("dd").classes(
+                        "m-0 px-3 py-2.5 text-2xl sm:text-3xl font-semibold text-slate-900 tabular-nums"
+                    ):
+                        ui.label(f"{value:,}{unit}")
+
+        with ui.element("table").classes(
+            "w-full table-fixed border-collapse border-t border-slate-200 text-slate-800"
+        ).props('aria-label="오류 대상 상태별 집계"'):
+            with ui.element("thead").classes("bg-slate-100 text-slate-600"):
+                with ui.element("tr"):
+                    for heading in ["구분", "오류 대상", "3개월 이상 미납"]:
+                        alignment = "text-left" if heading == "구분" else "text-center"
+                        with ui.element("th").props('scope="col"').classes(
+                            f"{alignment} border-b border-slate-200 px-3 py-2 text-xs sm:text-sm font-medium leading-snug"
+                        ):
+                            label = ui.label(heading)
+                            if heading == "3개월 이상 미납":
+                                label.tooltip("기준월보다 3개월 이상 이전의 미납 건수")
+            with ui.element("tbody"):
+                for status in [Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]:
+                    border = "border-b border-slate-200" if status != Status.EXCESS else ""
+                    with ui.element("tr").classes(border):
+                        with ui.element("th").props('scope="row"').classes(
+                            "px-3 py-1.5 text-left text-sm font-medium"
+                        ):
+                            ui.label(status)
+                        with ui.element("td").classes(
+                            "px-3 py-1.5 text-center text-base font-semibold tabular-nums"
+                        ):
+                            ui.label(f"{review['counts'][status]:,}건")
+                        overdue = f"{review['long_unpaid_count']:,}건" if status == Status.UNPAID else "-"
+                        foreground = "text-orange-600" if status == Status.UNPAID else "text-slate-400"
+                        with ui.element("td").classes(
+                            f"{foreground} px-3 py-1.5 text-center text-base font-semibold tabular-nums"
+                        ):
+                            ui.label(overdue)
+
+    with ui.element("dl").classes("result-metadata self-stretch mx-px my-0 border-t border-slate-200"):
+        for label, value in [
+            ("분석 기간", summary.get("period", "-")),
+            ("분석한 납부내역", f"{period_count:,}건"),
+            ("처리 시간", f"{duration:.2f}초"),
+        ]:
+            with ui.element("div").classes(
+                "grid grid-cols-3 border-b border-slate-200 py-1.5"
+            ):
+                with ui.element("dt").classes("col-span-2 px-3 text-xs sm:text-sm text-slate-600"):
+                    ui.label(label)
+                with ui.element("dd").classes("min-w-0 m-0 px-2 text-center text-sm text-slate-700 tabular-nums break-keep"):
+                    ui.label(value)
+
+    if review["target_count"] == 0:
+        with ui.row().classes("items-center gap-2 text-green-700"):
+            ui.icon("check_circle", size="20px")
+            ui.label("확인할 오류가 없습니다.").classes("text-sm")
+
+    if c_filt > 0:
+        ui.label(f"{c_filt:,}건의 미납 내역이 최초 납부월 이전이라 제외되었습니다.").classes(
+            "text-xs text-gray-500"
+        )
+
+    with ui.column().classes("result-actions w-full gap-2"):
         preparation = ExcelPreparation()
         initial_generation = preparation.start()
         initial_presentation = preparation.presentation
@@ -596,7 +745,7 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
             initial_presentation.text,
             icon=initial_presentation.icon,
             color=None,
-        ).props("size=md unelevated").style("background-color: #3b41e3; color: white; opacity: 1 !important; font-size: 14px; border-radius: 8px;").classes("w-full max-w-xs")
+        ).props("size=md unelevated").style("background-color: #3b41e3; color: white; opacity: 1 !important; font-size: 14px; border-radius: 8px;").classes("w-full min-h-[40px]")
 
         def update_download_button():
             presentation = preparation.presentation
@@ -681,34 +830,7 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
             "새로 분석하기",
             on_click=reset,
             icon="refresh",
-        ).props("outline size=md color=grey-7").style("border-radius: 8px; font-size: 14px;").classes("w-full max-w-xs")
-
-    kpi_configs = [
-        ("분석 대상", period_count, "bg-slate-100", "bg-slate-300", "text-slate-500", "text-slate-800"),
-        ("미납", c_miss, "bg-red-100", "bg-red-500", "text-red-800", "text-red-800"),
-        ("부족", c_under, "bg-indigo-100", "bg-indigo-500", "text-indigo-800", "text-indigo-800"),
-        ("초과", c_over, "bg-pink-100", "bg-pink-500", "text-pink-800", "text-pink-800"),
-        ("오류 합계", total_errors, "bg-violet-100", "bg-[#232936]", "text-violet-700", "text-violet-800"),
-    ]
-
-    with ui.row().classes("w-full gap-3 mb-8"):
-        for label, value, bg, bar, label_color, value_color in kpi_configs:
-            with ui.element("div").classes(
-                f"flex-1 rounded-xl py-5 px-3 text-center relative overflow-hidden shadow-sm {bg}"
-            ):
-                ui.element("div").classes(f"absolute top-0 left-0 right-0 h-1 {bar}")
-                ui.label(label).classes(f"text-sm font-semibold {label_color} tracking-wide mb-2")
-                ui.label(f"{value:,}").classes(f"text-3xl font-medium {value_color} tracking-tight")
-
-    messages = [f"처리 시간: {duration:.2f}초"]
-    if c_filt > 0:
-        messages.append(f"{c_filt}건의 미납 내역이 '최초 납부월 이전'이라 제외되었습니다.")
-    elif total_errors == 0:
-        messages.append("검출된 오류나 미납 내역이 없습니다.")
-
-    with ui.row().classes("w-full items-center gap-2 text-sm text-slate-600"):
-        ui.icon("info", size="sm").classes("text-slate-400")
-        ui.label("\n".join(messages)).classes("leading-relaxed")
+        ).props("outline size=md color=grey-7").style("border-radius: 8px; font-size: 14px;").classes("w-full min-h-[40px]")
 
 
 

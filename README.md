@@ -47,7 +47,7 @@ cd TaxCheck
 python app.py
 ```
 
-브라우저에서 `http://localhost:8090` 접속
+브라우저에서 `http://localhost:10010` 접속
 
 ## 환경 변수
 
@@ -67,9 +67,21 @@ GSHEET_URL=https://docs.google.com/spreadsheets/d/...
 ## 사용법
 
 1. **원본 엑셀 업로드**: 납부 내역이 포함된 엑셀 파일 (.xlsx)
-2. **졸업생 명단 연결**: Google Sheets URL 입력
-3. **분석 기간 설정**: 시작년도 ~ 종료년도
-4. **분석 실행**: 오류 검출 결과 확인 및 엑셀 다운로드
+2. **분석 기간 설정 (선택)**: 시작년도 ~ 종료년도
+3. **졸업생 명단 확인**: `GSHEET_URL`의 명단이 자동 연결되며, 실패하면 **다시 연결** 클릭
+4. **분석 실행**: 파일 업로드와 명단 연결이 완료되면 분석 실행
+5. **결과 확인**: 오류 대상 건수와 대상자 수를 확인하고, 결과 파일 준비가 완료되면 다운로드
+
+결과 화면의 오류 대상은 미납 전체와 차액의 절댓값이 1,000원 이상인 부족/초과 건입니다.
+1,000원 미만의 부족/초과 내역도 결과 엑셀에는 유지됩니다.
+
+## 테스트
+
+`TaxCheck` 디렉터리에서 실행합니다.
+
+```bash
+python -m unittest discover -v
+```
 
 ## 입력 데이터 형식
 
@@ -87,3 +99,6 @@ GSHEET_URL=https://docs.google.com/spreadsheets/d/...
 ## 라이선스
 
 MIT License
+
+화면 글꼴은 로컬에 포함된 Pretendard Variable을 사용합니다.
+글꼴의 SIL Open Font License와 출처는 `assets/fonts/`에 있습니다.
