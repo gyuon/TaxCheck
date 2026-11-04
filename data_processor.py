@@ -1,9 +1,13 @@
 import pandas as pd
 import math
 from io import BytesIO
+from zipfile import ZipFile
+from xml.etree import ElementTree as ET
 import requests
 import re
 from openpyxl.utils import get_column_letter
+from openpyxl.utils.units import points_to_pixels
+from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, PatternFill, Font, Border, Side
 from openpyxl.formatting.rule import FormulaRule
 import numpy as np
@@ -537,6 +541,78 @@ def generate_missed_months(
     return missed, filtered_count
 
 
+def _align_header_comment_right(excel_bytes, cell):
+    """헤더 메모의 오른쪽 경계를 해당 셀의 오른쪽 경계에 맞춘다."""
+    ws = cell.parent
+    comment = cell.comment
+    column_widths = []
+    for column in range(1, cell.column + 1):
+        dimension = ws.column_dimensions.get(get_column_letter(column))
+        width = dimension.width if dimension is not None else (ws.sheet_format.defaultColWidth or 13)
+        # Excel 기본 글꼴(Calibri 11)의 열 너비를 픽셀로 변환한다.
+        pixels = math.floor(width * 12 + 0.5) if width < 1 else math.floor(width * 7 + 0.5) + 5
+        column_widths.append(0 if dimension is not None and dimension.hidden else pixels)
+
+    left = max(0, sum(column_widths) - comment.width)
+    left_column, left_offset = 0, left
+    for width in column_widths:
+        if left_offset < width:
+            break
+        left_column += 1
+        left_offset -= width
+
+    # openpyxl의 기존 세로 위치(2px)와 높이는 유지하며, 필터로 숨겨진 행은 건너뛴다.
+    bottom_row, bottom_offset = 0, 2 + comment.height
+    while True:
+        dimension = ws.row_dimensions.get(bottom_row + 1)
+        height = (
+            dimension.height if dimension is not None and dimension.height is not None
+            else (ws.sheet_format.defaultRowHeight or 15)
+        )
+        pixels = 0 if dimension is not None and dimension.hidden else points_to_pixels(height)
+        if bottom_offset < pixels:
+            break
+        bottom_row += 1
+        bottom_offset -= pixels
+
+    vml = "urn:schemas-microsoft-com:vml"
+    excel = "urn:schemas-microsoft-com:office:excel"
+    output = BytesIO()
+    # openpyxl은 메모 좌표 API가 없으므로 저장된 VML만 보정한다.
+    with ZipFile(BytesIO(excel_bytes)) as source, ZipFile(output, "w") as destination:
+        drawing_path = ws.legacy_drawing
+        root = ET.fromstring(source.read(drawing_path))
+        for shape in root.findall(f"{{{vml}}}shape"):
+            client = shape.find(f"{{{excel}}}ClientData")
+            if (
+                client is None
+                or client.findtext(f"{{{excel}}}Row") != str(cell.row - 1)
+                or client.findtext(f"{{{excel}}}Column") != str(cell.column - 1)
+            ):
+                continue
+            style = dict(part.strip().split(":", 1) for part in shape.get("style").split(";") if part.strip())
+            style["margin-left"] = f"{left}px"
+            shape.set("style", ";".join(f"{name}:{value}" for name, value in style.items()))
+            # 필터 해제 시 숨겨진 행이 늘어나도 메모 상자 크기는 유지한다.
+            resize = client.find(f"{{{excel}}}SizeWithCells")
+            if resize is not None:
+                client.remove(resize)
+            anchor = client.find(f"{{{excel}}}Anchor")
+            if anchor is None:
+                anchor = ET.Element(f"{{{excel}}}Anchor")
+                client.insert(2, anchor)
+            anchor.text = f"{left_column}, {left_offset}, 0, 2, {cell.column}, 0, {bottom_row}, {bottom_offset}"
+            break
+        else:
+            raise ValueError("위치를 조정할 헤더 메모를 찾을 수 없습니다")
+
+        destination.comment = source.comment
+        for entry in source.infolist():
+            data = ET.tostring(root, encoding="utf-8") if entry.filename == drawing_path else source.read(entry.filename)
+            destination.writestr(entry, data)
+    return output.getvalue()
+
+
 def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw=None, start_year=None, end_year=None):
     """
     데이터프레임을 엑셀 바이트로 변환 (리팩토링 버전)
@@ -655,6 +731,8 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
             # 오토필터 및 정렬/포맷팅
             last_col = get_column_letter(len(df_e.columns) + 1)
             ws.auto_filter.ref = f"A1:{last_col}{len(df_e) + 1}"
+            ws.auto_filter.add_filter_column(column_numbers[Col.ERROR_TARGET] - 1, ["O"])
+            ws.sheet_properties.filterMode = True
 
             header_font = Font(color="FFFFFFFF", bold=True, size=11)
             header_fill = PatternFill(start_color="FF272F3A", end_color="FF272F3A", fill_type="solid")
@@ -666,6 +744,19 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
                 cell.fill = header_fill
                 cell.alignment = header_align
                 cell.border = thick_bottom_border
+
+            ws.cell(1, column_numbers[Col.ERROR_TARGET]).comment = Comment(
+                '다음 중 하나에 해당하면 오류 대상으로 표시합니다.\n\n'
+                '(1) 상태가 "미납"인 모든 항목\n'
+                '(2) 차액이 1,000원 이상 또는 -1,000원 이하인 항목\n\n'
+                '※ 납부금액의 천 원 미만 절삭 허용 규칙에 따라,\n'
+                '   차액이 -999원 ~ 999원인 부족·초과 항목은\n'
+                '   오류 대상에서 제외합니다.\n'
+                '   단, 미납 항목은 차액과 관계없이 포함합니다.',
+                "TaxCheck",
+                width=460,
+                height=200,
+            )
 
             year_month_fill = PatternFill(start_color="FFD4E3F8", end_color="FFD4E3F8", fill_type="solid")
             adjacent_month_fill = PatternFill(start_color="FFE0F2F1", end_color="FFE0F2F1", fill_type="solid")
@@ -696,7 +787,7 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
             alternate_ranges = [
                 f"A2:{column_letter(Col.NAME)}{last_data_row}",
                 f"{column_letter(Col.CODE)}2:{column_letter(Col.FORMULA)}{last_data_row}",
-                f"{column_letter(Col.UNPAID_3_MONTHS)}2:{column_letter(Col.UNPAID_3_MONTHS)}{last_data_row}",
+                f"{column_letter(Col.UNPAID_3_MONTHS)}2:{column_letter(Col.ERROR_TARGET)}{last_data_row}",
             ]
             for alt_range in alternate_ranges:
                 ws.conditional_formatting.add(
@@ -706,6 +797,10 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
 
             for row in ws.iter_rows(min_row=2, max_row=last_data_row):
                 excel_row_num = row[0].row
+                # 필터 조건만으로는 초기 행 표시가 바뀌지 않으므로 숨김 상태도 저장한다.
+                ws.row_dimensions[excel_row_num].hidden = (
+                    ws.cell(excel_row_num, column_numbers[Col.ERROR_TARGET]).value != "O"
+                )
 
                 for cell in row:
                     column_name = ws.cell(row=1, column=cell.column).value
@@ -863,5 +958,8 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
             last_col = get_column_letter(len(df_f.columns) + 1)
             ws_f.auto_filter.ref = f"A1:{last_col}{len(df_f) + 1}"
             ws_f.freeze_panes = "A2"
-    buffer.seek(0)
-    return buffer.getvalue(), output_filename
+    excel_bytes = buffer.getvalue()
+    if SheetName.ERROR_RESULT in writer.sheets:
+        ws = writer.sheets[SheetName.ERROR_RESULT]
+        excel_bytes = _align_header_comment_right(excel_bytes, ws.cell(1, ws.max_column))
+    return excel_bytes, output_filename
