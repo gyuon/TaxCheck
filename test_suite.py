@@ -697,6 +697,7 @@ class TestDataProcessorVerbose(unittest.TestCase):
             wb.sheetnames,
             [
                 SheetName.ERROR_RESULT,
+                SheetName.EXCESS_SHORTFALL,
                 SheetName.ERROR_SUMMARY,
                 SheetName.PERSON_ERROR_STATUS,
                 SheetName.FUND_ERROR_STATUS,

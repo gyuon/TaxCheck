@@ -12,6 +12,7 @@ from openpyxl.styles import Alignment, PatternFill, Font, Border, Side
 from openpyxl.formatting.rule import FormulaRule
 import numpy as np
 from constants import Col, Status, FundName, FundCode, RESULT_COLUMNS, SheetName
+from excess_shortfall import write_excess_shortfall_sheet
 from wide_summary import (
     build_wide_error_summary_by_fund,
     build_wide_error_summary_by_person,
@@ -852,6 +853,8 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
                     else:
                         cell.alignment = Alignment(horizontal="center")
             ws.freeze_panes = "A2"
+
+        write_excess_shortfall_sheet(writer, df_e, df_raw)
 
         # 2. 오류요약 시트 (이름별 요약)
         df_s = prepare_sheet(df_summary)
