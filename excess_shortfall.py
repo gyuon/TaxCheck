@@ -12,6 +12,23 @@ TARGET_DISPLAY_DPI = 120
 TARGET_DIGIT_WIDTH_PX = 10
 
 
+def filter_comparison_period(df_errors, reference_date, start_year=None, end_year=None):
+    """두 비교 시트의 공통 범위: 분석 기간 중 기준월보다 3개월 이상 이전."""
+    if df_errors is None or df_errors.empty:
+        return pd.DataFrame() if df_errors is None else df_errors.copy()
+    if reference_date is None or not 1 <= reference_date[1] <= 12:
+        raise ValueError("원본 파일명에서 기준 년월을 추출할 수 없습니다. 예: 정리본_26.11.4.xlsx")
+    cutoff = reference_date[0] * 12 + reference_date[1] - 3
+    years = pd.to_numeric(df_errors[Col.YEAR], errors="coerce")
+    months = pd.to_numeric(df_errors[Col.MONTH], errors="coerce")
+    mask = months.between(1, 12) & (years * 12 + months <= cutoff)
+    if start_year is not None:
+        mask &= years >= start_year
+    if end_year is not None:
+        mask &= years <= end_year
+    return df_errors.loc[mask.fillna(False)].copy()
+
+
 def build_excess_shortfall_summary(df_errors, df_raw=None):
     """오류 대상 월별 비교표. 원본은 오류 검출 대상 코드로 필터링된 내역이다."""
     columns = MONTH_KEYS + [f"{fund}_{metric}" for fund, _ in FUNDS for metric in [Col.DEPOSIT, Col.STANDARD]]

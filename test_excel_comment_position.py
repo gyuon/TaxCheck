@@ -22,7 +22,7 @@ class TestExcelCommentPosition(unittest.TestCase):
             Col.FUND_NAME: "협력", Col.CODE: "21", Col.STATUS: Status.EXCESS,
             Col.DIFF: 1000, Col.ERROR_TARGET: "O",
         }])
-        data, _ = to_excel_bytes(pd.DataFrame(), errors, "result.xlsx")
+        data, _ = to_excel_bytes(pd.DataFrame(), errors, "result.xlsx", source_filename="정리본_26.11.4.xlsx")
         worksheet = load_workbook(BytesIO(data))[SheetName.ERROR_RESULT]
         with ZipFile(BytesIO(data)) as archive:
             path = next(name for name in archive.namelist() if name.endswith(".vml"))

@@ -21,6 +21,7 @@ backup/
 !wide_summary.py
 !excel_preparation.py
 !excess_shortfall.py
+!unpaid.py
 
 *.pen
 

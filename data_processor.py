@@ -12,7 +12,8 @@ from openpyxl.styles import Alignment, PatternFill, Font, Border, Side
 from openpyxl.formatting.rule import FormulaRule
 import numpy as np
 from constants import Col, Status, FundName, FundCode, RESULT_COLUMNS, SheetName
-from excess_shortfall import write_excess_shortfall_sheet
+from excess_shortfall import filter_comparison_period, write_excess_shortfall_sheet
+from unpaid import write_unpaid_sheet
 from wide_summary import (
     build_wide_error_summary_by_fund,
     build_wide_error_summary_by_person,
@@ -614,7 +615,7 @@ def _align_header_comment_right(excel_bytes, cell):
     return output.getvalue()
 
 
-def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw=None, start_year=None, end_year=None):
+def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw=None, start_year=None, end_year=None, *, source_filename=None):
     """
     데이터프레임을 엑셀 바이트로 변환 (리팩토링 버전)
     """
@@ -854,7 +855,12 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
                         cell.alignment = Alignment(horizontal="center")
             ws.freeze_panes = "A2"
 
-        write_excess_shortfall_sheet(writer, df_e, df_raw)
+        reference_filename = source_filename or output_filename.replace("_오류검출.xlsx", ".xlsx")
+        comparison_errors = filter_comparison_period(
+            df_e, extract_date_from_filename(reference_filename), start_year, end_year
+        )
+        write_excess_shortfall_sheet(writer, comparison_errors, df_raw)
+        write_unpaid_sheet(writer, comparison_errors)
 
         # 2. 오류요약 시트 (이름별 요약)
         df_s = prepare_sheet(df_summary)

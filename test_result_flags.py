@@ -110,6 +110,7 @@ class TestResultFlags(unittest.TestCase):
             errors,
             "result.xlsx",
             df_raw=pd.DataFrame(),
+            source_filename="정리본_26.11.4.xlsx",
         )
         workbook = load_workbook(BytesIO(excel_bytes))
         worksheet = workbook[SheetName.ERROR_RESULT]
@@ -185,7 +186,7 @@ class TestResultFlags(unittest.TestCase):
                 ])
                 original = errors.copy(deep=True)
                 first = pd.DataFrame({Col.NAME: ["Person0"], Col.YEAR: [2021], Col.MONTH: [1]})
-                excel_bytes, _ = data_processor.to_excel_bytes(first, errors, "result.xlsx")
+                excel_bytes, _ = data_processor.to_excel_bytes(first, errors, "result.xlsx", source_filename="정리본_26.11.4.xlsx")
                 workbook = load_workbook(BytesIO(excel_bytes))
                 worksheet = workbook[SheetName.ERROR_RESULT]
                 headers = [cell.value for cell in worksheet[1]]
@@ -233,6 +234,7 @@ class TestResultFlags(unittest.TestCase):
             legacy_errors,
             "legacy.xlsx",
             df_raw=pd.DataFrame(),
+            source_filename="정리본_26.11.4.xlsx",
         )
         worksheet = load_workbook(BytesIO(excel_bytes))[SheetName.ERROR_RESULT]
         headers = [cell.value for cell in worksheet[1]]

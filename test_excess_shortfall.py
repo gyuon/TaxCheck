@@ -131,7 +131,7 @@ class TestExcessShortfallSheet(unittest.TestCase):
             payment(month=8, code=3, amount=3999000),
             payment(name="서윤구"), payment(name="서윤구", code=2, amount=523000),
         ])
-        data, filename = to_excel_bytes(pd.DataFrame(), errors, "※정리본_26.11.4.xlsx", df_raw=raw)
+        data, filename = to_excel_bytes(pd.DataFrame(), errors, "※정리본_26.11.4.xlsx", df_raw=raw, source_filename="정리본_27.2.4.xlsx")
         workbook = load_workbook(BytesIO(data))
         sheet = workbook[SheetName.EXCESS_SHORTFALL]
 
@@ -196,7 +196,7 @@ class TestExcessShortfallSheet(unittest.TestCase):
 
         self.assertEqual(summary[Col.NAME].tolist(), ["가나다", "가나다", "홍길동"])
         self.assertEqual(list(zip(summary[Col.YEAR], summary[Col.MONTH])), [(2026, 1), (2025, 12), (2025, 12)])
-        data, _ = to_excel_bytes(pd.DataFrame(), errors, "result.xlsx")
+        data, _ = to_excel_bytes(pd.DataFrame(), errors, "result.xlsx", source_filename="정리본_26.4.4.xlsx")
         sheet = load_workbook(BytesIO(data))[SheetName.EXCESS_SHORTFALL]
         self.assertEqual(sheet["B1"].value, "2026-01")
         self.assertEqual(sheet["B4"].value, "2025-12")
@@ -204,7 +204,7 @@ class TestExcessShortfallSheet(unittest.TestCase):
     def test_sheet_exists_with_message_when_no_target_errors(self):
         for errors in [pd.DataFrame(), pd.DataFrame([error(status=Status.UNPAID), error(target="")])]:
             with self.subTest(errors=errors):
-                data, _ = to_excel_bytes(pd.DataFrame(), errors, "empty.xlsx")
+                data, _ = to_excel_bytes(pd.DataFrame(), errors, "empty.xlsx", source_filename="정리본_27.2.4.xlsx")
                 sheet = load_workbook(BytesIO(data))[SheetName.EXCESS_SHORTFALL]
                 self.assertEqual(sheet["A1"].value, "초과·부족 오류 대상이 없습니다.")
                 self.assertEqual(sheet.auto_filter.filterColumn, [])

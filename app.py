@@ -633,6 +633,7 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
             counts[k] = int(type_counts.get(k, 0))
 
     summary_info = {
+        "source_filename": file_name,
         "counts": counts,
         "filtered_count": filtered_count,
         "total_grad_count": total_grad_count,
@@ -776,6 +777,7 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
                     df_view,
                     summary.get("start_year"),
                     summary.get("end_year"),
+                    source_filename=summary.get("source_filename"),
                 )
             except Exception as e:
                 result_log.exception(
