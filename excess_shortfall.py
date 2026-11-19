@@ -3,6 +3,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils.units import pixels_to_points
 
 from constants import Col, FundName, SheetName, Status
+from excel_styles import StyleTemplates
 
 
 FUNDS = [(FundName.OPERATING, 1), (FundName.COOPERATION, 2), (FundName.WELFARE, 3)]
@@ -82,55 +83,63 @@ def write_excess_shortfall_sheet(writer, df_errors, df_raw=None):
         # OOXML 너비에는 여백이 이미 포함되므로 UI 문자 수 환산식과 구분한다.
         ws.column_dimensions[column].width = pixels / TARGET_DIGIT_WIDTH_PX
 
-    if summary.empty:
-        ws.merge_cells("A1:E1")
-        ws["A1"] = "초과·부족 오류 대상이 없습니다."
-        ws["A1"].font = Font(size=11)
-        ws["A1"].alignment = centered
-        ws.row_dimensions[1].height = row_height
-        return
-
     name_fill = PatternFill("solid", fgColor="FFFFFFA7")
     month_fill = PatternFill("solid", fgColor="FFD4E3F8")
     fund_fill = PatternFill("solid", fgColor="FFF8E3D4")
     edge = Side(style="thin", color="FF000000")
     border = Border(left=edge, right=edge, top=edge, bottom=edge)
+    upper_border = Border(left=edge, right=edge, top=edge, bottom=Side())
+    lower_border = Border(left=edge, right=edge, top=Side(), bottom=edge)
     regular = Font(size=11, color="FF000000")
     standard_font = Font(size=11, color="FFFF0000")
+    bottom_aligned = Alignment(horizontal="center", vertical="bottom", wrap_text=True)
+    top_aligned = Alignment(horizontal="center", vertical="top", wrap_text=True)
+    styles = StyleTemplates()
 
-    row_number = 1
+    for column, label in enumerate(["이름", "년월", *(fund for fund, _ in FUNDS)], start=1):
+        cell = ws.cell(1, column, label)
+        styles.apply(cell, 'header', border=border, font=regular, alignment=centered, fill=fund_fill)
+    ws.row_dimensions[1].height = row_height
+    ws.freeze_panes = "A2"
+    if summary.empty:
+        ws.merge_cells("A2:E2")
+        ws["A2"] = "초과·부족 오류 대상이 없습니다."
+        ws["A2"].font = regular
+        ws["A2"].alignment = centered
+        ws.row_dimensions[2].height = row_height
+        return
+
+    row_number = 2
     for name, person in summary.groupby(Col.NAME, sort=False):
-        person_start = row_number
         for _, month in person.iterrows():
-            for cells in ws.iter_rows(min_row=row_number, max_row=row_number + 2, max_col=5):
+            # 월별 두 행은 숫자 셀로 유지하되 내부 가로선 없이 한 블록으로 보이게 한다.
+            for offset, cells in enumerate(ws.iter_rows(min_row=row_number, max_row=row_number + 1, max_col=5)):
                 for cell in cells:
-                    cell.border = border
-                    cell.font = regular
-                    cell.alignment = centered
+                    components = dict(
+                        border=upper_border if offset == 0 else lower_border,
+                        font=regular,
+                        alignment=bottom_aligned if offset == 0 else top_aligned,
+                    )
                     if cell.column == 1:
-                        cell.fill = name_fill
+                        components['fill'] = name_fill
                     elif cell.column == 2:
-                        cell.fill = month_fill
-            for offset in range(3):
-                ws.row_dimensions[row_number + offset].height = row_height
+                        components['fill'] = month_fill
+                    styles.apply(cell, ('body', cell.column, offset), **components)
+            ws.row_dimensions[row_number].height = pixels_to_points(34, dpi=TARGET_DISPLAY_DPI)
+            ws.row_dimensions[row_number + 1].height = row_height
+            name_cell = ws.cell(row_number, 1, str(name))
+            name_cell.data_type = "s"
             ws.cell(row_number, 2, f"{int(month[Col.YEAR])}-{int(month[Col.MONTH]):02d}")
-            ws.merge_cells(start_row=row_number, start_column=2, end_row=row_number + 2, end_column=2)
 
             for column, (fund, _) in enumerate(FUNDS, start=3):
-                header = ws.cell(row_number, column, fund)
-                header.fill = fund_fill
-                header.alignment = centered
-                for offset, metric in [(1, Col.DEPOSIT), (2, Col.STANDARD)]:
+                for offset, metric in [(0, Col.DEPOSIT), (1, Col.STANDARD)]:
                     value = month[f"{fund}_{metric}"]
                     cell = ws.cell(row_number + offset, column, None if pd.isna(value) else value)
-                    cell.number_format = "#,##0"
+                    components = {'number_format': '#,##0'}
                     if metric == Col.STANDARD:
-                        cell.font = standard_font
-            row_number += 3
+                        components['font'] = standard_font
+                    styles.apply(cell, metric, **components)
+            row_number += 2
 
-        ws.merge_cells(start_row=person_start, start_column=1, end_row=row_number - 1, end_column=1)
-        cell = ws.cell(person_start, 1, str(name))
-        cell.data_type = "s"
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         ws.row_dimensions[row_number].height = pixels_to_points(28, dpi=TARGET_DISPLAY_DPI)
         row_number += 1

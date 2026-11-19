@@ -51,7 +51,7 @@ class TestComparisonPeriod(unittest.TestCase):
         workbook = load_workbook(BytesIO(data))
         self.assertEqual(workbook.sheetnames[:3], [SheetName.ERROR_RESULT, SheetName.EXCESS_SHORTFALL, SheetName.UNPAID])
         self.assertEqual(workbook[SheetName.ERROR_RESULT].max_row, 5)
-        self.assertEqual(workbook[SheetName.EXCESS_SHORTFALL]["B1"].value, "2026-08")
+        self.assertEqual(workbook[SheetName.EXCESS_SHORTFALL]["B2"].value, "2026-08")
         self.assertEqual(workbook[SheetName.EXCESS_SHORTFALL].max_row, 3)
         self.assertEqual(workbook[SheetName.UNPAID]["B2"].value, "2026-08")
         self.assertEqual(workbook[SheetName.UNPAID].max_row, 2)

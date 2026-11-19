@@ -2,44 +2,7 @@ import sys
 import pandas as pd
 sys.path.insert(0, ".")
 from constants import Col, Status
-
-
-def _calc_adjacent_month_amounts(df_errors, df_raw):
-    if df_raw is None or df_errors is None or df_errors.empty or df_raw.empty:
-        return df_errors
-    if Col.CODE1 not in df_raw.columns:
-        return df_errors
-    df_work = df_raw.copy()
-    df_work["canonical"] = df_work[Col.CODE1]
-    valid = df_work[df_work["canonical"] > 0].copy()
-    valid["serial"] = valid[Col.YEAR] * 12 + valid[Col.MONTH]
-    grouped = valid.groupby([Col.NAME, "serial", "canonical"])[Col.RAW_DEPOSIT].sum().reset_index()
-    lookup = {}
-    for _, row in grouped.iterrows():
-        lookup[(row[Col.NAME], row["serial"], row["canonical"])] = int(row[Col.RAW_DEPOSIT])
-    df_out = df_errors.copy()
-    if Col.PREV_MONTH_AMT not in df_out.columns:
-        df_out[Col.PREV_MONTH_AMT] = None
-    if Col.NEXT_MONTH_AMT not in df_out.columns:
-        df_out[Col.NEXT_MONTH_AMT] = None
-    for idx, row in df_out.iterrows():
-        status = str(row.get(Col.STATUS, ""))
-        if status not in (Status.INSUFFICIENT, Status.EXCESS):
-            continue
-        fund_name = str(row.get(Col.FUND_NAME, ""))
-        canonical_map = {"운영": 1, "협력": 2, "복지": 3}
-        canonical = canonical_map.get(fund_name)
-        if canonical is None:
-            continue
-        name = row[Col.NAME]
-        cur_serial = int(row[Col.YEAR]) * 12 + int(row[Col.MONTH])
-        prev_serial = cur_serial - 1
-        next_serial = cur_serial + 1
-        prev_val = lookup.get((name, prev_serial, canonical))
-        next_val = lookup.get((name, next_serial, canonical))
-        df_out.at[idx, Col.PREV_MONTH_AMT] = prev_val if prev_val is not None else 0
-        df_out.at[idx, Col.NEXT_MONTH_AMT] = next_val if next_val is not None else 0
-    return df_out
+from data_processor import _calc_adjacent_month_amounts
 
 
 def make_raw(rows):
@@ -59,7 +22,7 @@ def test(name, df_errors, df_raw, check_fn):
         return True
     else:
         print(f"  [FAIL] {name}")
-        return False
+        raise AssertionError(name)
 
 
 print("=" * 60)
@@ -115,8 +78,8 @@ df_e = make_error([
 df_r = make_raw([
     {Col.NAME: "UserD", Col.YEAR: 2025, Col.MONTH: 12, Col.CODE1: 1, Col.CODE2: 1, Col.RAW_DEPOSIT: 70000},
 ])
-if test("미납은 전/익월 컬럼 수정 안함", df_e, df_r,
-       lambda r: r[Col.PREV_MONTH_AMT].tolist() == [None] and r[Col.NEXT_MONTH_AMT].tolist() == [None] and r[Col.UNPAID_3_MONTHS].tolist() == ["기존비고"]):
+if test("미납도 전/익월 금액을 계산하고 기존 표시는 유지", df_e, df_r,
+       lambda r: r[Col.PREV_MONTH_AMT].tolist() == [70000] and r[Col.NEXT_MONTH_AMT].tolist() == [0] and r[Col.UNPAID_3_MONTHS].tolist() == ["기존비고"]):
     passed += 1
 
 total += 1

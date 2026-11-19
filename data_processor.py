@@ -1,5 +1,6 @@
 import pandas as pd
 import math
+from datetime import date, datetime, timedelta
 from io import BytesIO
 from zipfile import ZipFile
 from xml.etree import ElementTree as ET
@@ -14,6 +15,8 @@ import numpy as np
 from constants import Col, Status, FundName, FundCode, RESULT_COLUMNS, SheetName
 from excess_shortfall import filter_comparison_period, write_excess_shortfall_sheet
 from unpaid import write_unpaid_sheet
+from excel_timing import start_excel_stage
+from excel_styles import StyleTemplates
 from wide_summary import (
     build_wide_error_summary_by_fund,
     build_wide_error_summary_by_person,
@@ -205,10 +208,13 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
     pivot = pivot.reset_index()
     
     # 원본 데이터에서 해당 그룹에 어떤 코드들이 존재하는지 확인 (입금액 0원 등 특이 케이스 대응)
-    existence = target_df.groupby([Col.NAME, Col.YEAR, Col.MONTH])[Col.CODE1].apply(set)
-    valid_indices = [idx for idx, codes in existence.items() if 1 in codes and (2 in codes or 3 in codes)]
+    existence = (
+        target_df.groupby([Col.NAME, Col.YEAR, Col.MONTH, Col.CODE1], observed=True)
+        .size().unstack(fill_value=0).reindex(columns=[1, 2, 3], fill_value=0).gt(0)
+    )
+    valid_indices = existence.index[existence[1] & (existence[2] | existence[3])]
     
-    if not valid_indices:
+    if len(valid_indices) == 0:
         return pd.DataFrame()
 
     # pivot 필터링
@@ -229,14 +235,14 @@ def detect_errors(df: pd.DataFrame) -> pd.DataFrame:
             "name": FundName.COOPERATION,
             "code": FundCode.COOPERATION,
             "deposit": work_df["협력_입금"],
-            "has_mask": pd.Series([2 in c for c in existence[work_df.index]], index=work_df.index),
+            "has_mask": existence[2].reindex(work_df.index, fill_value=False),
             "type": "coop"
         },
         {
             "name": FundName.WELFARE,
             "code": FundCode.WELFARE,
             "deposit": work_df["복지_입금"],
-            "has_mask": pd.Series([3 in c for c in existence[work_df.index]], index=work_df.index),
+            "has_mask": existence[3].reindex(work_df.index, fill_value=False),
             "type": "welf"
         }
     ]
@@ -402,22 +408,9 @@ def generate_missed_months(
         # 2. missed에 serial 컬럼 추가
         missed["serial"] = missed[Col.YEAR] * 12 + missed[Col.MONTH]
         
-        # 3. 필터링 함수
-        def is_after_first(row):
-            try:
-                name = row[Col.NAME]
-                if name not in first_serial_dict:
-                    return True # 최초 납부 정보 없으면 유지
-                return row["serial"] >= first_serial_dict[name]
-            except Exception as e:
-                # 에러 발생 시 데이터 컨텍스트 포함
-                raise ValueError(f"데이터 검증 중 오류 발생 (이름: {row.get(Col.NAME,'?')}, 년월: {row.get(Col.YEAR,'?')}-{row.get(Col.MONTH,'?')}): {e}")
-        
-        # 마스크 계산
-        # [수정] .fillna 시 object 타입 배열의 다운캐스팅 FutureWarning 해결
-        mask_series = missed.apply(is_after_first, axis=1)
-        # 결과가 object 타입인지 확인 후 결측치를 채우고 bool 타입으로 변환
-        mask = mask_series.infer_objects(copy=False).fillna(False).astype(bool)
+        first_serial = missed[Col.NAME].map(first_serial_dict)
+        known_first = missed[Col.NAME].isin(first_serial_dict)
+        mask = (~known_first | missed['serial'].ge(first_serial)).fillna(False).astype(bool)
         # 제외된 건수 계산
         filtered_count = (~mask).sum()
         
@@ -430,15 +423,11 @@ def generate_missed_months(
     if exemption_map:
         canonical_to_fund = {1: FundName.OPERATING, 2: FundName.COOPERATION, 3: FundName.WELFARE}
         
-        def is_exempted(row):
-            name = row[Col.NAME]
-            canonical = row["canonical"]
-            if name not in exemption_map:
-                return False
-            fund_name = canonical_to_fund.get(canonical, "")
-            return fund_name in exemption_map[name]
-        
-        exempt_mask = missed.apply(is_exempted, axis=1)
+        exempt_pairs = {
+            (name, code) for name, funds in exemption_map.items()
+            for code, fund in canonical_to_fund.items() if fund in funds
+        }
+        exempt_mask = pd.MultiIndex.from_arrays([missed[Col.NAME], missed['canonical']]).isin(exempt_pairs)
         missed = missed[~exempt_mask].copy()
         
         if missed.empty:
@@ -470,7 +459,7 @@ def generate_missed_months(
     monthly_totals = {
         canonical: valid_rows[valid_rows["canonical"] == canonical].groupby(
             [Col.NAME, Col.YEAR, Col.MONTH]
-        )[Col.RAW_DEPOSIT].sum()
+        )[Col.RAW_DEPOSIT].sum().to_dict()
         for canonical in (1, 2, 3)
     }
 
@@ -480,11 +469,10 @@ def generate_missed_months(
             return None
         return total
 
-    def _calc_standard(row):
-        key = (row[Col.NAME], row[Col.YEAR], row[Col.MONTH])
-        canonical = row["canonical"]
-        year = int(row[Col.YEAR])
-        month = int(row[Col.MONTH])
+    def _calc_standard(name, raw_year, raw_month, canonical):
+        key = (name, raw_year, raw_month)
+        year = int(raw_year)
+        month = int(raw_month)
 
         # 기준금액 책정 우선순위: 운영 -> 복지 -> 협력
         op_total = _get_monthly_total(1, key)
@@ -516,22 +504,20 @@ def generate_missed_months(
             return standard, formula
         return operating_standard, operating_formula
 
-    std_formula = missed.apply(_calc_standard, axis=1, result_type="expand")
+    std_formula = pd.DataFrame(
+        [_calc_standard(*row) for row in missed[[Col.NAME, Col.YEAR, Col.MONTH, 'canonical']].itertuples(index=False, name=None)],
+        index=missed.index,
+    )
     missed[Col.STANDARD] = std_formula[0]
     missed[Col.FORMULA] = std_formula[1]
-    missed[Col.DIFF] = missed[Col.STANDARD].apply(
-        lambda standard: -standard if pd.notna(standard) else pd.NA
-    )
+    missed[Col.DIFF] = -missed[Col.STANDARD]
     missed = _set_error_target(missed)
     
     if ref_date:
         cutoff_serial = ref_date[0] * 12 + ref_date[1] - 2
         if "serial" not in missed.columns:
             missed["serial"] = missed[Col.YEAR] * 12 + missed[Col.MONTH]
-        missed[Col.UNPAID_3_MONTHS] = missed.apply(
-            lambda row: "O" if row["serial"] < cutoff_serial else "",
-            axis=1
-        )
+        missed[Col.UNPAID_3_MONTHS] = missed['serial'].lt(cutoff_serial).map({True: 'O', False: ''})
         missed = missed.drop(columns=["serial"])
     else:
         missed[Col.UNPAID_3_MONTHS] = ""
@@ -615,50 +601,97 @@ def _align_header_comment_right(excel_bytes, cell):
     return output.getvalue()
 
 
+def _calc_adjacent_month_amounts(df_errors, df_raw):
+    if df_raw is None or df_errors is None or df_errors.empty or df_raw.empty:
+        return df_errors
+    if Col.CODE1 not in df_raw.columns:
+        return df_errors
+
+    keys = [Col.NAME, Col.YEAR, Col.MONTH, Col.CODE1, Col.RAW_DEPOSIT]
+    valid = df_raw.loc[df_raw[Col.CODE1] > 0, keys].copy()
+    valid['serial'] = valid[Col.YEAR] * 12 + valid[Col.MONTH]
+    amounts = valid.groupby([Col.NAME, 'serial', Col.CODE1])[Col.RAW_DEPOSIT].sum()
+    lookup = {key: int(value) for key, value in amounts.items()}
+
+    result = df_errors.copy()
+    previous = result[Col.PREV_MONTH_AMT].tolist() if Col.PREV_MONTH_AMT in result else [None] * len(result)
+    following = result[Col.NEXT_MONTH_AMT].tolist() if Col.NEXT_MONTH_AMT in result else [None] * len(result)
+    fund_codes = {'운영': 1, '협력': 2, '복지': 3}
+    fields = result.reindex(columns=[Col.NAME, Col.YEAR, Col.MONTH, Col.FUND_NAME, Col.STATUS])
+    for position, (name, year, month, fund, status) in enumerate(fields.itertuples(index=False, name=None)):
+        code = fund_codes.get(str(fund))
+        if code is None or str(status) not in (Status.INSUFFICIENT, Status.EXCESS, Status.UNPAID):
+            continue
+        serial = int(year) * 12 + int(month)
+        previous[position] = lookup.get((name, serial - 1, code), 0)
+        following[position] = lookup.get((name, serial + 1, code), 0)
+    result[Col.PREV_MONTH_AMT] = pd.Series(previous, index=result.index, dtype=object)
+    result[Col.NEXT_MONTH_AMT] = pd.Series(following, index=result.index, dtype=object)
+    return result
+
+
+def _excel_scalar(value, writer):
+    """기존 pandas 내보내기의 빈값·숫자·날짜 표현을 유지한다."""
+    if isinstance(value, str):
+        return value, None
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value), None
+    if isinstance(value, (int, np.integer)) and not isinstance(value, np.timedelta64):
+        return int(value), None
+    if value is None or value is pd.NA or value is pd.NaT:
+        return '', None
+    if isinstance(value, (float, np.floating)):
+        if math.isnan(value):
+            return '', None
+        if math.isinf(value):
+            return 'inf' if value > 0 else '-inf', None
+        return float(value), None
+    if pd.api.types.is_scalar(value) and pd.isna(value):
+        return '', None
+    if getattr(value, 'tzinfo', None) is not None:
+        raise ValueError('Excel does not support datetimes with timezones.')
+    if isinstance(value, datetime):
+        return value, writer.datetime_format
+    if isinstance(value, date):
+        return value, writer.date_format
+    if isinstance(value, timedelta):
+        return value.total_seconds() / 86400, '0'
+    return str(value), None
+
+
+def _write_error_result_rows(writer, frame):
+    """오류검출결과의 단일 헤더와 번호 열을 행 단위로 기록한다.
+
+    글꼴·테두리·정렬은 호출부에서 모든 셀에 지정하므로 pandas의 임시 서식은 생략한다.
+    """
+    sheet = writer.book.create_sheet(SheetName.ERROR_RESULT)
+    sheet.append(['번호', *frame.columns])
+    for row_number, record in enumerate(frame.itertuples(index=True, name=None), start=2):
+        values, formats = [], []
+        for column, value in enumerate(record, start=1):
+            converted, number_format = _excel_scalar(value, writer)
+            values.append(converted)
+            if number_format is not None:
+                formats.append((column, number_format))
+        sheet.append(values)
+        for column, number_format in formats:
+            sheet.cell(row_number, column).number_format = number_format
+    return sheet
+
+
 def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw=None, start_year=None, end_year=None, *, source_filename=None):
     """
     데이터프레임을 엑셀 바이트로 변환 (리팩토링 버전)
     """
+    finish_total = start_excel_stage(
+        "total", error_rows=0 if df_errors is None else len(df_errors),
+        raw_rows=0 if df_raw is None else len(df_raw), start_year=start_year, end_year=end_year,
+    )
     buffer = BytesIO()
     
-    def _calc_adjacent_month_amounts(df_errors, df_raw):
-        if df_raw is None or df_errors is None or df_errors.empty or df_raw.empty:
-            return df_errors
-        if Col.CODE1 not in df_raw.columns:
-            return df_errors
-        df_work = df_raw.copy()
-        df_work["canonical"] = df_work[Col.CODE1]
-        valid = df_work[df_work["canonical"] > 0].copy()
-        valid["serial"] = valid[Col.YEAR] * 12 + valid[Col.MONTH]
-        grouped = valid.groupby([Col.NAME, "serial", "canonical"])[Col.RAW_DEPOSIT].sum().reset_index()
-        lookup = {}
-        for _, row in grouped.iterrows():
-            lookup[(row[Col.NAME], row["serial"], row["canonical"])] = int(row[Col.RAW_DEPOSIT])
-        df_out = df_errors.copy()
-        if Col.PREV_MONTH_AMT not in df_out.columns:
-            df_out[Col.PREV_MONTH_AMT] = None
-        if Col.NEXT_MONTH_AMT not in df_out.columns:
-            df_out[Col.NEXT_MONTH_AMT] = None
-        for idx, row in df_out.iterrows():
-            status = str(row.get(Col.STATUS, ""))
-            if status not in (Status.INSUFFICIENT, Status.EXCESS, Status.UNPAID):
-                continue
-            fund_name = str(row.get(Col.FUND_NAME, ""))
-            canonical_map = {"운영": 1, "협력": 2, "복지": 3}
-            canonical = canonical_map.get(fund_name)
-            if canonical is None:
-                continue
-            name = row[Col.NAME]
-            cur_serial = int(row[Col.YEAR]) * 12 + int(row[Col.MONTH])
-            prev_serial = cur_serial - 1
-            next_serial = cur_serial + 1
-            prev_val = lookup.get((name, prev_serial, canonical))
-            next_val = lookup.get((name, next_serial, canonical))
-            df_out.at[idx, Col.PREV_MONTH_AMT] = prev_val if prev_val is not None else 0
-            df_out.at[idx, Col.NEXT_MONTH_AMT] = next_val if next_val is not None else 0
-        return df_out
-    
+    finish = start_excel_stage("adjacent_month_amounts")
     df_errors = _calc_adjacent_month_amounts(df_errors, df_raw)
+    finish()
     
     def prepare_sheet(df, exclude_cols=None):
         if df is None or df.empty:
@@ -684,6 +717,7 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
             )
         return result.reindex(columns=RESULT_COLUMNS)
 
+    finish = start_excel_stage("workbook_setup")
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:  # type: ignore[arg-type]
         thin_border = Border(
             left=Side(style='thin', color='FF9CA3AF'),
@@ -698,12 +732,13 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
             bottom=Side(style='thick', color='FF9CA3AF')
         )
 
+        finish()
+        finish = start_excel_stage("error_result_sheet")
         # 1. 오류검출결과 시트 (사용자 요청으로 앞에 위치)
         df_e = prepare_error_result_sheet(df_errors)
         if df_e is not None:
             df_e.index = range(1, len(df_e) + 1)
-            df_e.to_excel(writer, index=True, index_label="번호", sheet_name=SheetName.ERROR_RESULT)
-            ws = writer.sheets[SheetName.ERROR_RESULT]
+            ws = _write_error_result_rows(writer, df_e)
             
             column_numbers = {cell.value: cell.column for cell in ws[1]}
 
@@ -769,6 +804,16 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
             }
             even_row_fill = PatternFill(start_color="FFF5F3F4", end_color="FFF5F3F4", fill_type="solid")
             default_font = Font(color="FF000000", size=10)
+            styles = StyleTemplates()
+            alignments = {name: Alignment(horizontal=name) for name in ['left', 'center', 'right']}
+            status_fonts = {
+                Status.UNPAID: Font(color='FF9CA3AF', bold=True),
+                Status.INSUFFICIENT: Font(color='FFEF4444', bold=True),
+                Status.EXCESS: Font(color='FF059669', bold=True),
+            }
+            status_labels = {Status.UNPAID: '✕ 미납', Status.INSUFFICIENT: '▼ 부족', Status.EXCESS: '▲ 초과'}
+            headers = [cell.value for cell in ws[1]]
+            right_aligned = {Col.DIFF, Col.DEPOSIT, Col.STANDARD, Col.PREV_MONTH_AMT, Col.NEXT_MONTH_AMT}
 
             last_data_row = len(df_e) + 1
 
@@ -804,64 +849,46 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
                     ws.cell(excel_row_num, column_numbers[Col.ERROR_TARGET]).value != "O"
                 )
 
-                for cell in row:
-                    column_name = ws.cell(row=1, column=cell.column).value
-                    cell.font = default_font
-                    cell.border = thin_border
-
+                status_cell = row[column_numbers[Col.STATUS] - 1]
+                status_value = str(status_cell.value).strip() if status_cell.value else ""
+                if status_value in status_labels:
+                    status_cell.value = status_labels[status_value]
+                for cell, column_name in zip(row, headers):
+                    font = default_font
                     if column_name == Col.STATUS:
-                        status_value = str(cell.value).strip() if cell.value else ""
-                        if status_value == "미납":
-                            cell.font = Font(color='FF9CA3AF', bold=True)
-                            cell.value = "✕ 미납"
-                        elif status_value == "부족":
-                            cell.font = Font(color='FFEF4444', bold=True)
-                            cell.value = "▼ 부족"
-                        elif status_value == "초과":
-                            cell.font = Font(color='FF059669', bold=True)
-                            cell.value = "▲ 초과"
-
-                    if column_name == Col.DIFF:
-                        status_cell = ws.cell(row=excel_row_num, column=column_numbers[Col.STATUS])
-                        status_value = str(status_cell.value).strip() if status_cell.value else ""
-                        if "미납" in status_value:
-                            cell.font = Font(color='FF9CA3AF', bold=True)
-                        elif "부족" in status_value:
-                            cell.font = Font(color='FFEF4444', bold=True)
-                        elif "초과" in status_value:
-                            cell.font = Font(color='FF059669', bold=True)
-                        if cell.value is not None and isinstance(cell.value, (int, float)):
-                            cell.number_format = '+#,##0;-#,##0;0'
-
-                    if column_name in [Col.DEPOSIT, Col.STANDARD]:
-                        if cell.value is not None:
-                            cell.number_format = "#,##0"
-
-                    if column_name in [Col.PREV_MONTH_AMT, Col.NEXT_MONTH_AMT]:
-                        if cell.value is not None and isinstance(cell.value, (int, float)):
-                            cell.number_format = "#,##0"
-
-                    if column_name in [
-                        Col.DIFF,
-                        Col.DEPOSIT,
-                        Col.STANDARD,
-                        Col.PREV_MONTH_AMT,
-                        Col.NEXT_MONTH_AMT,
-                    ]:
-                        cell.alignment = Alignment(horizontal="right")
-                    elif column_name == Col.FORMULA:
-                        cell.alignment = Alignment(horizontal="left")
-                    else:
-                        cell.alignment = Alignment(horizontal="center")
+                        font = status_fonts.get(status_value, default_font)
+                    elif column_name == Col.DIFF:
+                        font = next((status_fonts[s] for s in status_fonts if s in status_value), default_font)
+                    alignment = 'right' if column_name in right_aligned else 'left' if column_name == Col.FORMULA else 'center'
+                    number_format = None
+                    if column_name == Col.DIFF and isinstance(cell.value, (int, float)):
+                        number_format = '+#,##0;-#,##0;0'
+                    elif column_name in {Col.DEPOSIT, Col.STANDARD} and cell.value is not None:
+                        number_format = '#,##0'
+                    elif column_name in {Col.PREV_MONTH_AMT, Col.NEXT_MONTH_AMT} and isinstance(cell.value, (int, float)):
+                        number_format = '#,##0'
+                    components = dict(font=font, border=thin_border, alignment=alignments[alignment])
+                    if number_format is not None:
+                        components['number_format'] = number_format
+                    key = (column_name, status_value if column_name in {Col.STATUS, Col.DIFF} else None, number_format)
+                    styles.apply(cell, key, **components)
             ws.freeze_panes = "A2"
 
+        finish(rows=0 if df_e is None else len(df_e), columns=0 if df_e is None else len(df_e.columns) + 1)
+        finish = start_excel_stage("comparison_period_filter")
         reference_filename = source_filename or output_filename.replace("_오류검출.xlsx", ".xlsx")
         comparison_errors = filter_comparison_period(
             df_e, extract_date_from_filename(reference_filename), start_year, end_year
         )
+        finish(rows=len(comparison_errors))
+        finish = start_excel_stage("excess_shortfall_sheet")
         write_excess_shortfall_sheet(writer, comparison_errors, df_raw)
+        finish(rows=writer.sheets[SheetName.EXCESS_SHORTFALL].max_row)
+        finish = start_excel_stage("unpaid_sheet")
         write_unpaid_sheet(writer, comparison_errors)
+        finish(rows=writer.sheets[SheetName.UNPAID].max_row)
 
+        finish = start_excel_stage("error_summary_sheet")
         # 2. 오류요약 시트 (이름별 요약)
         df_s = prepare_sheet(df_summary)
         if df_s is not None:
@@ -924,8 +951,12 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
             ws_s.freeze_panes = "A3"
 
 
+        finish(rows=0 if df_s is None else len(df_s))
+        finish = start_excel_stage("wide_summary_sheets")
         write_wide_summary_sheets(writer, df_errors, start_year, end_year)
+        finish()
 
+        finish = start_excel_stage("first_payment_sheet")
         # 3. 최초납부월 시트
         df_f = prepare_sheet(df_first, exclude_cols=["작업일자", "구분", "코드3"])
         if df_f is not None:
@@ -967,8 +998,14 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
             last_col = get_column_letter(len(df_f.columns) + 1)
             ws_f.auto_filter.ref = f"A1:{last_col}{len(df_f) + 1}"
             ws_f.freeze_panes = "A2"
+        finish(rows=0 if df_f is None else len(df_f))
+        finish = start_excel_stage("workbook_save_zip")
+    finish(bytes=buffer.tell())
     excel_bytes = buffer.getvalue()
+    finish = start_excel_stage("comment_position_zip")
     if SheetName.ERROR_RESULT in writer.sheets:
         ws = writer.sheets[SheetName.ERROR_RESULT]
         excel_bytes = _align_header_comment_right(excel_bytes, ws.cell(1, ws.max_column))
+    finish(bytes=len(excel_bytes))
+    finish_total(bytes=len(excel_bytes))
     return excel_bytes, output_filename

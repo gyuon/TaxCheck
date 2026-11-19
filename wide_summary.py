@@ -3,6 +3,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from constants import Col, FundName, SheetName, Status
+from excel_timing import start_excel_stage
+from excel_styles import StyleTemplates
 
 
 YEARLY_WIDE_METRICS = ["초과건수", "초과금액", "부족건수", "부족금액", "미납건수", "미납금액"]
@@ -66,36 +68,37 @@ def _build_wide_summary(
     columns.extend(f"총계_{metric}" for metric in TOTAL_WIDE_METRICS)
 
     df = _add_amount_columns(df_errors)
-    rows = []
-    for group_value, group_df in df.groupby(group_column, dropna=False):
-        ranged_group_df = group_df[group_df[Col.YEAR].isin(years)]
-        row = {column: 0 for column in columns}
-        row[group_column] = group_value
+    # 기간 밖의 항목만 있는 사람/기금도 기존처럼 0건 행으로 남긴다.
+    groups = df.groupby(group_column, dropna=False, observed=False).size().index
+    ranged = df.loc[df[Col.YEAR].isin(years)]
+    per_year = ranged.groupby([group_column, Col.YEAR, Col.STATUS], dropna=False, observed=True)["wide_amount"].agg(["size", "sum"])
+    totals = ranged.groupby([group_column, Col.STATUS], dropna=False, observed=True)["wide_amount"].agg(["size", "sum"])
+    unknown = ranged.groupby(group_column, dropna=False, observed=True)["unknown_amount"].sum()
+    values = {group_column: groups.to_numpy()}
+    zero = pd.Series(0, index=groups)
+
+    for status, count_metric, amount_metric in [
+        (Status.EXCESS, "초과건수", "초과금액"),
+        (Status.INSUFFICIENT, "부족건수", "부족금액"),
+        (Status.UNPAID, "미납건수", "미납금액"),
+    ]:
+        if status in per_year.index.get_level_values(Col.STATUS):
+            yearly = per_year.xs(status, level=Col.STATUS).unstack(Col.YEAR)
+        else:
+            yearly = pd.DataFrame(index=groups)
         for year in years:
-            year_df = ranged_group_df[ranged_group_df[Col.YEAR] == year]
-            for status, count_metric, amount_metric in [
-                (Status.EXCESS, "초과건수", "초과금액"),
-                (Status.INSUFFICIENT, "부족건수", "부족금액"),
-                (Status.UNPAID, "미납건수", "미납금액"),
-            ]:
-                status_df = year_df[year_df[Col.STATUS] == status]
-                row[f"{year}_{count_metric}"] = int(len(status_df))
-                row[f"{year}_{amount_metric}"] = int(status_df["wide_amount"].sum())
+            for source, metric in [("size", count_metric), ("sum", amount_metric)]:
+                values[f"{year}_{metric}"] = yearly.get((source, year), zero).reindex(groups).fillna(0).astype(int).to_numpy()
 
-        for status, count_metric, amount_metric in [
-            (Status.EXCESS, "초과건수", "초과금액"),
-            (Status.INSUFFICIENT, "부족건수", "부족금액"),
-            (Status.UNPAID, "미납건수", "미납금액"),
-        ]:
-            status_df = ranged_group_df[ranged_group_df[Col.STATUS] == status]
-            row[f"총계_{count_metric}"] = int(len(status_df))
-            row[f"총계_{amount_metric}"] = int(status_df["wide_amount"].sum())
-        row["총계_금액모름"] = int(ranged_group_df["unknown_amount"].sum())
-        row["총계_총건수"] = int(row["총계_초과건수"] + row["총계_부족건수"] + row["총계_미납건수"])
-        row["총계_총금액"] = int(row["총계_초과금액"] + row["총계_부족금액"] + row["총계_미납금액"])
-        rows.append(row)
+        # 총계는 연도별 정수 변환 전 금액에서 계산한다.
+        total = totals.xs(status, level=Col.STATUS) if status in totals.index.get_level_values(Col.STATUS) else pd.DataFrame(index=groups)
+        for source, metric in [("size", count_metric), ("sum", amount_metric)]:
+            values[f"총계_{metric}"] = total.get(source, zero).reindex(groups).fillna(0).astype(int).to_numpy()
 
-    summary = pd.DataFrame(rows, columns=columns)
+    values["총계_금액모름"] = unknown.reindex(groups).fillna(0).astype(int).to_numpy()
+    values["총계_총건수"] = values["총계_초과건수"] + values["총계_부족건수"] + values["총계_미납건수"]
+    values["총계_총금액"] = values["총계_초과금액"] + values["총계_부족금액"] + values["총계_미납금액"]
+    summary = pd.DataFrame(values, columns=columns)
     if group_column == Col.NAME:
         return summary.sort_values(["총계_총건수", "총계_총금액", Col.NAME], ascending=[False, False, True]).reset_index(drop=True)
 
@@ -121,8 +124,12 @@ def build_wide_error_summary_by_fund(
 
 
 def write_wide_summary_sheets(writer, df_errors: pd.DataFrame, start_year=None, end_year=None) -> None:
+    finish = start_excel_stage("person_summary_aggregation")
     person_status = build_wide_error_summary_by_person(df_errors, start_year, end_year)
+    finish(rows=len(person_status), columns=len(person_status.columns))
+    finish = start_excel_stage("fund_summary_aggregation")
     fund_status = build_wide_error_summary_by_fund(df_errors, start_year, end_year)
+    finish(rows=len(fund_status), columns=len(fund_status.columns))
     _write_wide_summary_sheet(writer, SheetName.PERSON_ERROR_STATUS, Col.NAME, person_status)
     _write_wide_summary_sheet(writer, SheetName.FUND_ERROR_STATUS, Col.FUND_NAME, fund_status)
 
@@ -131,12 +138,16 @@ def _write_wide_summary_sheet(writer, sheet_name: str, group_column: str, summar
     if summary_df is None:
         return
 
+    finish = start_excel_stage("wide_sheet_data", sheet=sheet_name, rows=len(summary_df))
     ws = writer.book.create_sheet(sheet_name)
     years = _extract_years(summary_df)
     layout = _build_sheet_layout(group_column, years)
     _write_headers(ws, group_column, years)
     _write_data_rows(ws, summary_df, layout, group_column)
+    finish(rows=len(summary_df), columns=len(layout))
+    finish = start_excel_stage("wide_sheet_style", sheet=sheet_name)
     _style_sheet(ws, layout)
+    finish(rows=len(summary_df) + 2, columns=len(layout))
 
 
 def _extract_years(summary_df: pd.DataFrame) -> list[int]:
@@ -235,6 +246,8 @@ def _style_sheet(ws, layout) -> None:
     thick_left_metrics = {"초과건수", "부족건수", "미납건수", "총건수"}
     thick_right_metrics = {"초과금액", "부족금액", "미납금액", "총금액"}
     max_col = len(layout)
+    max_row = ws.max_row
+    styles = StyleTemplates()
 
     for column, item in enumerate(layout, start=1):
         kind, _, metric = item
@@ -250,30 +263,34 @@ def _style_sheet(ws, layout) -> None:
         else:
             ws.column_dimensions[letter].width = 9.6
 
-        for row in range(1, ws.max_row + 1):
+        for row in range(1, max_row + 1):
             cell = ws.cell(row=row, column=column)
-            left = thick if column == 1 or kind == "sep" or metric in thick_left_metrics else thin
-            right = thick if kind == "sep" or metric in thick_right_metrics or column == max_col else thin
-            top = thick if row == 1 else thin
-            bottom = thick if row == ws.max_row else thin
-            cell.border = Border(left=left, right=right, top=top, bottom=bottom)
 
-            if row <= 2:
-                cell.font = header_row_1_font if row == 1 else header_row_2_font
-                cell.fill = fills["total"] if kind == "total" else fills["normal"]
-                if kind == "sep":
-                    cell.fill = fills["separator"]
-                cell.alignment = Alignment(
-                    horizontal="center" if kind == "field" or row == 1 else "left",
-                    vertical="center",
-                )
-                continue
+            def configure(target):
+                left = thick if column == 1 or kind == "sep" or metric in thick_left_metrics else thin
+                right = thick if kind == "sep" or metric in thick_right_metrics or column == max_col else thin
+                top = thick if row == 1 else thin
+                bottom = thick if row == max_row else thin
+                target.border = Border(left=left, right=right, top=top, bottom=bottom)
+                if row <= 2:
+                    target.font = header_row_1_font if row == 1 else header_row_2_font
+                    target.fill = fills["total"] if kind == "total" else fills["normal"]
+                    if kind == "sep":
+                        target.fill = fills["separator"]
+                    target.alignment = Alignment(
+                        horizontal="center" if kind == "field" or row == 1 else "left",
+                        vertical="center",
+                    )
+                else:
+                    _style_data_cell(target, kind, metric, row, name_font, metric_fonts, fills, amount_metrics)
 
-            _style_data_cell(cell, kind, metric, row, name_font, metric_fonts, fills, amount_metrics)
+            key = (kind, metric, column == 1, column == max_col, row if row <= 2 else 0,
+                   row == max_row, (row - 2) % 2, isinstance(cell.value, (int, float)))
+            styles.apply_with(cell, key, configure)
 
     ws.row_dimensions[1].height = 24
     ws.row_dimensions[2].height = 24
-    ws.auto_filter.ref = f"A2:{get_column_letter(max_col)}{ws.max_row}"
+    ws.auto_filter.ref = f"A2:{get_column_letter(max_col)}{max_row}"
     ws.freeze_panes = "B3"
 
 

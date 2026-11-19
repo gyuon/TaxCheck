@@ -115,9 +115,11 @@ class TestExcessShortfallSheet(unittest.TestCase):
             self.assertEqual(displayed_pixels, pixels)
         self.assertAlmostEqual(sheet.row_dimensions[1].height, 21.6)
         self.assertEqual(points_to_pixels(sheet.row_dimensions[1].height, dpi=120), 36)
+        self.assertEqual(points_to_pixels(sheet.row_dimensions[2].height, dpi=120), 34)
+        self.assertEqual(points_to_pixels(sheet.row_dimensions[3].height, dpi=120), 36)
         self.assertEqual(sheet.sheet_view.zoomScale, 100)
 
-    def test_layout_sorting_merges_amounts_and_styles(self):
+    def test_two_row_layout_sorting_unmerged_labels_amounts_and_styles(self):
         errors = pd.DataFrame([
             error(name="서윤구"),
             error(month=8, fund=FundName.WELFARE, status=Status.EXCESS, deposit=3999000, standard=3140000),
@@ -138,33 +140,45 @@ class TestExcessShortfallSheet(unittest.TestCase):
         self.assertEqual(filename, "※정리본_26.11.4.xlsx")
         self.assertEqual(workbook.sheetnames[:2], [SheetName.ERROR_RESULT, SheetName.EXCESS_SHORTFALL])
         self.assertEqual(sheet.max_column, 5)
-        self.assertEqual(sheet.max_row, 10)
-        self.assertEqual(sheet["A1"].value, "김선애")
-        self.assertEqual(sheet["A8"].value, "서윤구")
-        self.assertEqual(sheet["B1"].value, "2026-11")
+        self.assertEqual(sheet.max_row, 8)
+        self.assertEqual([cell.value for cell in sheet[1]], ["이름", "년월", "운영", "협력", "복지"])
+        self.assertEqual(sheet["A2"].value, "김선애")
+        self.assertEqual(sheet["A4"].value, "김선애")
+        self.assertEqual(sheet["A7"].value, "서윤구")
+        self.assertEqual(sheet["B2"].value, "2026-11")
         self.assertEqual(sheet["B4"].value, "2026-08")
-        self.assertEqual(set(str(item) for item in sheet.merged_cells.ranges), {
-            "A1:A6", "A8:A10", "B1:B3", "B4:B6", "B8:B10",
-        })
+        self.assertEqual(list(sheet.merged_cells.ranges), [])
         self.assertEqual([sheet.cell(1, column).value for column in range(3, 6)], ["운영", "협력", "복지"])
         self.assertEqual([sheet.cell(2, column).value for column in range(3, 6)], [3104000, 523000, 3999000])
         self.assertEqual([sheet.cell(3, column).value for column in range(3, 6)], [None, 1200000, 3104000])
-        self.assertEqual([sheet.cell(6, column).value for column in range(3, 6)], [None, None, 3140000])
-        self.assertTrue(all(sheet.cell(7, column).value is None for column in range(1, 6)))
-        self.assertEqual(sheet["A1"].fill.fgColor.rgb, "FFFFFFA7")
-        self.assertEqual(sheet["A8"].fill.fgColor.rgb, "FFFFFFA7")
-        for row_number in [1, 4, 8]:
+        self.assertEqual([sheet.cell(5, column).value for column in range(3, 6)], [None, None, 3140000])
+        self.assertTrue(all(sheet.cell(6, column).value is None for column in range(1, 6)))
+        self.assertTrue(all(cell.fill.fgColor.rgb == "FFF8E3D4" for cell in sheet[1]))
+        for row_number in [2, 4, 7]:
+            self.assertEqual(sheet.cell(row_number, 1).fill.fgColor.rgb, "FFFFFFA7")
             self.assertEqual(sheet.cell(row_number, 2).fill.fgColor.rgb, "FFD4E3F8")
+            self.assertEqual(sheet.cell(row_number + 1, 1).fill.fgColor.rgb, "FFFFFFA7")
+            self.assertEqual(sheet.cell(row_number + 1, 2).fill.fgColor.rgb, "FFD4E3F8")
+            self.assertIsNone(sheet.cell(row_number + 1, 1).value)
+            self.assertIsNone(sheet.cell(row_number + 1, 2).value)
+            for column in range(1, 6):
+                upper, lower = sheet.cell(row_number, column), sheet.cell(row_number + 1, column)
+                self.assertIsNone(upper.border.bottom.style)
+                self.assertIsNone(lower.border.top.style)
+                self.assertEqual(upper.border.top.style, "thin")
+                self.assertEqual(lower.border.bottom.style, "thin")
+                self.assertEqual(upper.alignment.vertical, "bottom")
+                self.assertEqual(lower.alignment.vertical, "top")
             for column in range(3, 6):
-                self.assertEqual(sheet.cell(row_number, column).fill.fgColor.rgb, "FFF8E3D4")
+                self.assertIsNone(sheet.cell(row_number, column).fill.fill_type)
                 self.assertIsNone(sheet.cell(row_number + 1, column).fill.fill_type)
-                self.assertIsNone(sheet.cell(row_number + 2, column).fill.fill_type)
         self.assertEqual(sheet["D3"].font.color.rgb, "FFFF0000")
         self.assertEqual(sheet["D3"].number_format, "#,##0")
         self.assertEqual(sheet["D3"].data_type, "n")
         self.assertEqual(sheet["D3"].alignment.horizontal, "center")
         self.assertEqual(sheet["A1"].alignment.vertical, "center")
-        self.assertEqual(sheet["C2"].border.bottom.style, "thin")
+        self.assertEqual(sheet["C3"].border.bottom.style, "thin")
+        self.assertEqual(sheet.freeze_panes, "A2")
         self.assertIsNone(sheet.auto_filter.ref)
         self.assertFalse(any(row.hidden for row in sheet.row_dimensions.values()))
         for column, pixels in {"A": 110, "B": 110, "C": 120, "D": 120, "E": 120}.items():
@@ -173,14 +187,15 @@ class TestExcessShortfallSheet(unittest.TestCase):
             self.assertEqual(math.trunc(((256 * width + math.trunc(128 / 10)) / 256) * 10), pixels)
         self.assertEqual(points_to_pixels(sheet.sheet_format.defaultRowHeight, dpi=120), 36)
         for row_number in range(1, sheet.max_row + 1):
-            expected_pixels = 28 if row_number == 7 else 36
+            expected_pixels = 28 if row_number == 6 else 34 if row_number in [2, 4, 7] else 36
             self.assertEqual(points_to_pixels(sheet.row_dimensions[row_number].height, dpi=120), expected_pixels)
-        self.assertAlmostEqual(sheet.row_dimensions[7].height, 16.8)
+        self.assertAlmostEqual(sheet.row_dimensions[6].height, 16.8)
         for row in sheet.iter_rows():
             for cell in row:
                 if cell.value is not None:
                     self.assertEqual(cell.alignment.horizontal, "center")
-                    self.assertEqual(cell.alignment.vertical, "center")
+                    expected_vertical = "center" if cell.row == 1 else "top" if cell.row in [3, 5, 8] else "bottom"
+                    self.assertEqual(cell.alignment.vertical, expected_vertical)
         result = workbook[SheetName.ERROR_RESULT]
         self.assertEqual(result.auto_filter.filterColumn[0].filters.filter, ["O"])
         self.assertIsNotNone(result.cell(1, result.max_column).comment)
@@ -198,7 +213,7 @@ class TestExcessShortfallSheet(unittest.TestCase):
         self.assertEqual(list(zip(summary[Col.YEAR], summary[Col.MONTH])), [(2026, 1), (2025, 12), (2025, 12)])
         data, _ = to_excel_bytes(pd.DataFrame(), errors, "result.xlsx", source_filename="정리본_26.4.4.xlsx")
         sheet = load_workbook(BytesIO(data))[SheetName.EXCESS_SHORTFALL]
-        self.assertEqual(sheet["B1"].value, "2026-01")
+        self.assertEqual(sheet["B2"].value, "2026-01")
         self.assertEqual(sheet["B4"].value, "2025-12")
 
     def test_sheet_exists_with_message_when_no_target_errors(self):
@@ -206,7 +221,7 @@ class TestExcessShortfallSheet(unittest.TestCase):
             with self.subTest(errors=errors):
                 data, _ = to_excel_bytes(pd.DataFrame(), errors, "empty.xlsx", source_filename="정리본_27.2.4.xlsx")
                 sheet = load_workbook(BytesIO(data))[SheetName.EXCESS_SHORTFALL]
-                self.assertEqual(sheet["A1"].value, "초과·부족 오류 대상이 없습니다.")
+                self.assertEqual(sheet["A2"].value, "초과·부족 오류 대상이 없습니다.")
                 self.assertEqual(sheet.auto_filter.filterColumn, [])
                 self.assertEqual(sheet["A1"].alignment.horizontal, "center")
                 self.assertEqual(sheet["A1"].alignment.vertical, "center")
@@ -219,8 +234,8 @@ class TestExcessShortfallSheet(unittest.TestCase):
             write_excess_shortfall_sheet(writer, pd.DataFrame([error(name=name)]))
         sheet = load_workbook(BytesIO(buffer.getvalue()))[SheetName.EXCESS_SHORTFALL]
 
-        self.assertEqual(sheet["A1"].value, name)
-        self.assertEqual(sheet["A1"].data_type, "s")
+        self.assertEqual(sheet["A2"].value, name)
+        self.assertEqual(sheet["A2"].data_type, "s")
 
 
 if __name__ == "__main__":
