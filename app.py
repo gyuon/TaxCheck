@@ -13,6 +13,7 @@ from data_processor import (
 )
 from constants import Col, Status
 from excel_preparation import ExcelPreparation, ExcelPreparationStatus
+from excel_timing import log_excel_event, new_excel_run_id
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,14 @@ import time
 from dotenv import load_dotenv
 from analysis_inputs import PreparedInput
 from analysis_results import encode_result, decode_result
+
+# 새 업로드 없이 결과 화면을 복원해도 성능 로그를 남긴다.
+_app_log = logging.getLogger("taxcheck")
+_app_log.setLevel(logging.INFO)
+if not _app_log.handlers:
+    _log_handler = logging.StreamHandler()
+    _log_handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+    _app_log.addHandler(_log_handler)
 
 pd.set_option("future.no_silent_downcasting", True)
 
@@ -435,13 +444,7 @@ def _sheet_preparation(settings):
 
 
 def read_payment_data(file_bytes):
-    import logging
     log = logging.getLogger("taxcheck")
-    log.setLevel(logging.DEBUG)
-    if not log.handlers:
-        h = logging.StreamHandler()
-        h.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
-        log.addHandler(h)
 
     try:
         excel_read_start = time.time()
@@ -822,7 +825,9 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
 
         async def prepare_excel(generation: int):
             generation_started = time.perf_counter()
+            excel_run_id = new_excel_run_id()
             result_log = logging.getLogger("taxcheck")
+            log_excel_event("submitted", run_id=excel_run_id)
             try:
                 excel_data, _ = await run.io_bound(
                     to_excel_bytes,
@@ -834,11 +839,13 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
                     summary.get("start_year"),
                     summary.get("end_year"),
                     source_filename=summary.get("source_filename"),
+                    diagnostic_run_id=excel_run_id,
+                    diagnostic_submitted_at=generation_started,
                 )
             except Exception as e:
                 result_log.exception(
-                    "결과 엑셀 생성 실패 (%.2f초)",
-                    time.perf_counter() - generation_started,
+                    "결과 엑셀 생성 실패 (%.2f초), run_id=%s",
+                    time.perf_counter() - generation_started, excel_run_id,
                 )
                 if preparation.fail(generation, str(e)):
                     try:
@@ -849,16 +856,21 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
                 return
 
             if not preparation.complete(generation, excel_data):
-                result_log.info("이전 엑셀 생성 결과 폐기")
+                log_excel_event("discarded", run_id=excel_run_id)
                 return
 
             result_log.info(
-                "결과 엑셀 생성 완료 (%.2f초), bytes=%d",
+                "결과 엑셀 생성 완료 (%.2f초), bytes=%d, run_id=%s",
                 time.perf_counter() - generation_started,
                 len(excel_data),
+                excel_run_id,
             )
             try:
                 update_download_button()
+                log_excel_event(
+                    "ready_update_enqueued", run_id=excel_run_id,
+                    elapsed_s=round(time.perf_counter() - generation_started, 3),
+                )
             except RuntimeError:
                 result_log.info("엑셀 생성 완료 후 클라이언트 연결 종료")
 

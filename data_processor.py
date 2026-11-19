@@ -15,7 +15,8 @@ import numpy as np
 from constants import Col, Status, FundName, FundCode, RESULT_COLUMNS, SheetName
 from excess_shortfall import filter_comparison_period, write_excess_shortfall_sheet
 from unpaid import write_unpaid_sheet
-from excel_timing import start_excel_stage
+from excel_timing import start_excel_stage, trace_excel_export
+from excel_save import DiagnosticExcelWriter
 from excel_styles import StyleTemplates
 from wide_summary import (
     build_wide_error_summary_by_fund,
@@ -679,6 +680,7 @@ def _write_error_result_rows(writer, frame):
     return sheet
 
 
+@trace_excel_export
 def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw=None, start_year=None, end_year=None, *, source_filename=None):
     """
     데이터프레임을 엑셀 바이트로 변환 (리팩토링 버전)
@@ -718,7 +720,7 @@ def to_excel_bytes(df_first, df_errors, output_filename, df_summary=None, df_raw
         return result.reindex(columns=RESULT_COLUMNS)
 
     finish = start_excel_stage("workbook_setup")
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:  # type: ignore[arg-type]
+    with DiagnosticExcelWriter(buffer) as writer:
         thin_border = Border(
             left=Side(style='thin', color='FF9CA3AF'),
             right=Side(style='thin', color='FF9CA3AF'),

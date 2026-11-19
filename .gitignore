@@ -21,6 +21,7 @@ backup/
 !wide_summary.py
 !excel_preparation.py
 !excel_timing.py
+!excel_save.py
 !excel_styles.py
 !analysis_inputs.py
 !analysis_results.py
