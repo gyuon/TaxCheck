@@ -589,7 +589,7 @@ class TestDataProcessorVerbose(unittest.TestCase):
         process_data = next(
             node
             for node in module.body
-            if isinstance(node, ast.FunctionDef) and node.name == "process_data"
+            if isinstance(node, ast.FunctionDef) and node.name == "read_payment_data"
         )
         read_excel_call = next(
             node

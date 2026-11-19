@@ -18,10 +18,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 import logging
+import asyncio
+import requests
 import os
 import pandas as pd
 import time
 from dotenv import load_dotenv
+from analysis_inputs import PreparedInput
+from analysis_results import encode_result, decode_result
 
 pd.set_option("future.no_silent_downcasting", True)
 
@@ -209,8 +213,17 @@ def render_upload_content(file_state, parent, on_change=None):
 
 
 async def on_file_uploaded(e: UploadEventArguments, file_state, parent, on_change=None):
-    file_state["bytes"] = await e.file.read()
+    generation = file_state.get("generation", 0) + 1
+    file_state["generation"] = generation
+    file_state["bytes"] = None
+    if on_change is not None:
+        on_change()
+    content = await e.file.read()
+    if file_state["generation"] != generation:
+        return
+    file_state["bytes"] = content
     file_state["name"] = e.file.name
+    _payment_preparation(file_state).start(generation, content)
     if parent:
         parent.clear()
         with parent:
@@ -245,12 +258,28 @@ def render_gsheet_card(settings, on_change=None):
                         ).classes("initial-sheet-retry")
 
     async def refresh():
+        generation = settings.get('sheet_generation', 0) + 1
+        settings['sheet_generation'] = generation
         settings["gsheet_ready"] = False
         render(loading=True)
         if on_change is not None:
             on_change()
-        title = await run.io_bound(get_google_sheets_title, settings["gsheet_url"])
-        settings["gsheet_ready"] = bool(title)
+        url = settings["gsheet_url"]
+        preparation = _sheet_preparation(settings)
+        prepared_task = preparation.start(url, url, force=True)
+        title, data = await asyncio.gather(
+            run.io_bound(get_google_sheets_title, url), asyncio.shield(prepared_task),
+            return_exceptions=True,
+        )
+        if settings['sheet_generation'] != generation or settings['gsheet_url'] != url:
+            return
+        ready = isinstance(data, pd.DataFrame)
+        title = title if isinstance(title, str) else None
+        settings["gsheet_ready"] = ready
+        if ready:
+            title = title or "졸업생 명단"
+        else:
+            title = None
         render(title=title)
         if on_change is not None:
             on_change()
@@ -320,6 +349,11 @@ async def analyze(file_state, settings, main):
         ui.notify("원본 엑셀과 Google Sheets URL을 입력하세요.", type="warning")
         return
 
+    content, filename = file_state['bytes'], file_state['name']
+    generation = file_state.get('generation', 0)
+    sheet_url = settings['gsheet_url']
+    start_year, end_year = settings['start_year'], settings['end_year']
+
     main.classes(remove="initial-main", add=RESULT_MAIN_CLASSES)
     main.clear()
     with main:
@@ -328,13 +362,19 @@ async def analyze(file_state, settings, main):
             ui.label("데이터 처리 중입니다").classes("text-slate-500")
 
     try:
+        prepared_df, prepared_sheet = await asyncio.gather(
+            _payment_preparation(file_state).get(generation, content),
+            _sheet_preparation(settings).get(sheet_url, sheet_url),
+        )
         df_errors, df_first, df_summary, dl_name, summary, df_view = await run.io_bound(
             process_data,
-            file_state["bytes"],
-            file_state["name"],
-            settings["gsheet_url"],
-            settings["start_year"],
-            settings["end_year"],
+            content,
+            filename,
+            sheet_url,
+            start_year,
+            end_year,
+            prepared_df=prepared_df,
+            prepared_sheet=prepared_sheet,
         )
     except Exception as e:
         import traceback
@@ -353,39 +393,48 @@ async def analyze(file_state, settings, main):
         return
 
     serialize_start = time.time()
-    df_errors_records = df_errors.to_dict("records")
-    df_first_records = df_first.to_dict("records")
-    df_summary_records = df_summary.to_dict("records") if not df_summary.empty else []
-    df_view_records = df_view.to_dict("records")
+    encoded_result = await run.io_bound(
+        encode_result, df_errors, df_first, df_summary, dl_name, summary, df_view,
+    )
     logging_log = logging.getLogger("taxcheck")
     logging_log.info(
         "결과 직렬화 완료 (%.2f초), df_errors=%d건, df_first=%d건, df_summary=%d건, df_view=%d건",
         time.time() - serialize_start,
-        len(df_errors_records),
-        len(df_first_records),
-        len(df_summary_records),
-        len(df_view_records),
+        len(df_errors),
+        len(df_first),
+        len(df_summary),
+        len(df_view),
     )
 
-    app.storage.user["result"] = {
-        "df_errors": df_errors_records,
-        "df_first": df_first_records,
-        "df_summary": df_summary_records,
-        "df_view": df_view_records,
-        "dl_name": dl_name,
-        "summary": summary,
-    }
+    # JSON 문자열 한 개를 저장해 수만 개 레코드의 변경 추적 객체 생성을 피한다.
+    app.storage.user["result"] = encoded_result
     app.storage.user["result_ready"] = True
 
     try:
         main.clear()
         with main:
-            build_result_view_from_storage()
+            build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view)
     except RuntimeError:
         print("[ERROR] RuntimeError: 결과 뷰 UI 업데이트 실패")
 
 
-def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
+def _payment_preparation(state):
+    if "preparation" not in state:
+        async def load(content):
+            return await run.io_bound(read_payment_data, content)
+        state["preparation"] = PreparedInput(load)
+    return state["preparation"]
+
+
+def _sheet_preparation(settings):
+    if "preparation" not in settings:
+        async def load(url):
+            return await run.io_bound(read_graduate_data, url)
+        settings["preparation"] = PreparedInput(load, ttl=300)
+    return settings["preparation"]
+
+
+def read_payment_data(file_bytes):
     import logging
     log = logging.getLogger("taxcheck")
     log.setLevel(logging.DEBUG)
@@ -393,9 +442,6 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
         h = logging.StreamHandler()
         h.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
         log.addHandler(h)
-
-    start_time = time.time()
-    log.info("1/8 엑셀 파일 읽기: %s", file_name)
 
     try:
         excel_read_start = time.time()
@@ -442,28 +488,43 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
         time.time() - numeric_start,
         len(numeric_columns),
     )
+    return df
 
-    def to_csv_url(url: str) -> str:
-        if "export?format=csv" in url:
-            return url
-        if "/edit" in url:
-            return url.split("/edit")[0] + "/export?format=csv"
-        return url
 
-    csv_url = to_csv_url(gsheet_url)
-    log.info("2/8 Google Sheets CSV 다운로드: %s", csv_url)
+def read_graduate_data(url):
+    csv_url = url.split('/edit')[0] + '/export?format=csv' if '/edit' in url else url
     csv_start = time.time()
-    df_sheet = pd.read_csv(csv_url)
+    response = requests.get(csv_url, timeout=(5, 20))
+    response.raise_for_status()
+    df_sheet = pd.read_csv(BytesIO(response.content))
+    df_sheet = normalize_names(df_sheet)
+    if not {"이름", "구분"}.issubset(df_sheet.columns):
+        raise ValueError("Google Sheet에 '이름'과 '구분' 열이 필요합니다.")
+    log = logging.getLogger('taxcheck')
     log.info(
         "2/8 Google Sheets CSV 다운로드 완료 (%.2f초), rows=%d, cols=%d",
         time.time() - csv_start,
         len(df_sheet),
         len(df_sheet.columns),
     )
-    df_sheet = normalize_names(df_sheet)
+    return df_sheet
 
-    if "구분" not in df_sheet.columns or "이름" not in df_sheet.columns:
-        raise ValueError("Google Sheet에 '이름'과 '구분' 열이 필요합니다.")
+
+def process_data(file_bytes, file_name, gsheet_url, start_year, end_year, *, prepared_df=None, prepared_sheet=None):
+    log = logging.getLogger('taxcheck')
+    start_time = time.time()
+    # 준비된 입력은 분석별 복사본으로 사용해 기간/명단 변경이 캐시를 바꾸지 않게 한다.
+    if prepared_df is None or prepared_sheet is None:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            payment = pool.submit(read_payment_data, file_bytes) if prepared_df is None else None
+            graduates = pool.submit(read_graduate_data, gsheet_url) if prepared_sheet is None else None
+            if payment is not None:
+                prepared_df = payment.result()
+            if graduates is not None:
+                prepared_sheet = graduates.result()
+    df = prepared_df.copy()
+    df_sheet = prepared_sheet.copy()
 
     graduation_names = list(
         set(df_sheet[df_sheet["구분"].str.strip() == "졸업생"]["이름"].tolist())
@@ -650,12 +711,7 @@ def process_data(file_bytes, file_name, gsheet_url, start_year, end_year):
 
 
 def build_result_view_from_storage():
-    r = app.storage.user["result"]
-    df_errors = pd.DataFrame(r["df_errors"])
-    df_first = pd.DataFrame(r["df_first"])
-    df_summary = pd.DataFrame(r["df_summary"]) if r["df_summary"] else pd.DataFrame()
-    df_view = pd.DataFrame(r.get("df_view", []))
-    build_result_view(df_errors, df_first, df_summary, r["dl_name"], r["summary"], df_view)
+    build_result_view(*decode_result(app.storage.user["result"]))
 
 
 def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view=None):

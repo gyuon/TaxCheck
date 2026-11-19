@@ -1,5 +1,7 @@
 import importlib
+import asyncio
 import unittest
+import pandas as pd
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -27,6 +29,23 @@ class InitialViewTestCase(unittest.IsolatedAsyncioTestCase):
 
 
 class TestInitialUploadView(InitialViewTestCase):
+    async def test_late_upload_read_cannot_replace_newer_file(self):
+        release = asyncio.Event()
+        async def read_old():
+            await release.wait()
+            return b'old'
+        state = {'bytes': None, 'name': None}
+        old = SimpleNamespace(file=SimpleNamespace(name='same.xlsx', read=read_old))
+        new = SimpleNamespace(file=SimpleNamespace(name='same.xlsx', read=AsyncMock(return_value=b'new')))
+        with patch.object(view.run, 'io_bound', new=AsyncMock(return_value=pd.DataFrame())):
+            pending = asyncio.create_task(view.on_file_uploaded(old, state, None))
+            await asyncio.sleep(0)
+            await view.on_file_uploaded(new, state, None)
+            release.set()
+            await pending
+            await state['preparation'].get(state['generation'], state['bytes'])
+        self.assertEqual(state['bytes'], b'new')
+
     def test_empty_upload_displays_prompt_and_card_title(self):
         with self.ui_parent() as parent:
             view.render_upload_content({"bytes": None, "name": None}, parent)
@@ -63,12 +82,14 @@ class TestInitialUploadView(InitialViewTestCase):
             view.render_upload_content(state, parent, changed)
 
         event = SimpleNamespace(file=SimpleNamespace(name="new.xlsx", read=AsyncMock(return_value=b"new")))
-        await view.on_file_uploaded(event, state, parent, changed)
+        with patch.object(view.run, 'io_bound', new=AsyncMock(return_value=pd.DataFrame())):
+            await view.on_file_uploaded(event, state, parent, changed)
+            await state['preparation'].get(state['generation'], state['bytes'])
 
-        self.assertEqual(state, {"bytes": b"new", "name": "new.xlsx"})
+        self.assertEqual((state['bytes'], state['name']), (b'new', 'new.xlsx'))
         self.assertEqual(labels(parent), ["납부내역 파일", "new.xlsx", "0.0 KB"])
         self.assertEqual(len(parent.default_slot.children), 2)
-        changed.assert_called_once_with()
+        self.assertEqual(changed.call_count, 2)
 
 
 class TestInitialSheetView(InitialViewTestCase):
@@ -95,7 +116,9 @@ class TestInitialSheetView(InitialViewTestCase):
 
         self.assertFalse(settings["gsheet_ready"])
         self.assertIn("명단을 불러오는 중", labels(parent))
-        with patch.object(view.run, "io_bound", new=AsyncMock(return_value="졸업생 명단 원본")):
+        async def prepared(func, *args):
+            return '졸업생 명단 원본' if func == view.get_google_sheets_title else pd.DataFrame({'이름': ['A'], '구분': ['졸업생']})
+        with patch.object(view.run, "io_bound", new=AsyncMock(side_effect=prepared)):
             await timer.call_args.args[1]()
 
         self.assertTrue(settings["gsheet_ready"])
@@ -112,7 +135,15 @@ class TestInitialSheetView(InitialViewTestCase):
                 view.render_gsheet_card(settings)
 
         refresh = timer.call_args.args[1]
-        with patch.object(view.run, "io_bound", new=AsyncMock(side_effect=[None, "재연결된 명단"])):
+        attempts = [0]
+        async def prepared(func, *args):
+            if func == view.get_google_sheets_title:
+                return '재연결된 명단'
+            attempts[0] += 1
+            if attempts[0] == 1:
+                raise ValueError('offline')
+            return pd.DataFrame({'이름': ['A'], '구분': ['졸업생']})
+        with patch.object(view.run, "io_bound", new=AsyncMock(side_effect=prepared)):
             await refresh()
             self.assertFalse(settings["gsheet_ready"])
             self.assertIn("명단을 불러오지 못했습니다", labels(parent))
@@ -137,6 +168,20 @@ class TestInitialSheetView(InitialViewTestCase):
 
 
 class TestInitialPeriodView(InitialViewTestCase):
+    def test_analysis_reuses_prepared_inputs_without_mutating_them(self):
+        source = pd.DataFrame([{'이름': 'A', '납부년': 2026, '납부월': 1,
+                                '코드1': 1, '코드2': 1, '입금': 100000}])
+        graduates = pd.DataFrame([{'이름': 'A', '구분': '졸업생', '면제기금': '협력'}])
+        old_source, old_graduates = source.copy(deep=True), graduates.copy(deep=True)
+        with patch.object(view, 'read_payment_data', side_effect=AssertionError('read again')):
+            with patch.object(view, 'read_graduate_data', side_effect=AssertionError('download again')):
+                for start in [2025, 2026]:
+                    result = view.process_data(b'unused', 'input_26.2.4.xlsx', 'unused', start, 2026,
+                                               prepared_df=source, prepared_sheet=graduates)
+                    self.assertFalse(result[0].empty)
+        pd.testing.assert_frame_equal(source, old_source)
+        pd.testing.assert_frame_equal(graduates, old_graduates)
+
     def test_period_icon_matches_upload_check_icon_size(self):
         with self.ui_parent() as parent:
             view.render_period_card({"start_year": 2013, "end_year": 2026})
