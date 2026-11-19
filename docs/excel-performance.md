@@ -9,6 +9,8 @@ Render Dashboard에서 해당 서비스의 **Logs**를 열고 `excel_`로 검색
 - `excel_diagnostic event=submitted`: 서버에서 파일 생성을 요청한 시점.
 - `worker_start`: 작업 스레드 시작. `queue_wait_s`는 요청부터 스레드 시작까지의 대기 시간이다.
   `runtime`에는 Python/pandas/openpyxl/lxml 버전과 `lxml_enabled`가 포함된다.
+  lxml은 `requirements.txt`의 배포 의존성이다. 배포 후 `lxml_enabled: True`와
+  설치 버전을 확인한다. `OPENPYXL_LXML=False` 환경 변수는 이 가속을 비활성화한다.
 - `excel_stage`: 기존 단계별 시작/완료 로그. `wall_s`는 실제 경과 시간,
   `cpu_s`는 현재 작업 스레드의 CPU 사용 시간이다. 부모 단계와 하위 단계를 합산하면 중복된다.
 - `save_breakdown`: `workbook_save_zip` 안의 저장 시간 구분.
