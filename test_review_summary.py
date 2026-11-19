@@ -7,6 +7,43 @@ from data_processor import summarize_review_targets
 
 
 class TestReviewSummary(unittest.TestCase):
+    def test_aged_errors_cover_all_statuses_and_deduplicate_people(self):
+        errors = pd.DataFrame([
+            {Col.NAME: "A", Col.YEAR: 2026, Col.MONTH: 8, Col.STATUS: Status.UNPAID, Col.ERROR_TARGET: "O"},
+            {Col.NAME: "A", Col.YEAR: 2026, Col.MONTH: 8, Col.STATUS: Status.INSUFFICIENT, Col.ERROR_TARGET: "O"},
+            {Col.NAME: "B", Col.YEAR: 2025, Col.MONTH: 12, Col.STATUS: Status.EXCESS, Col.ERROR_TARGET: "O"},
+            {Col.NAME: "C", Col.YEAR: 2026, Col.MONTH: 9, Col.STATUS: Status.INSUFFICIENT, Col.ERROR_TARGET: "O"},
+            {Col.NAME: "D", Col.YEAR: 2026, Col.MONTH: 11, Col.STATUS: Status.EXCESS, Col.ERROR_TARGET: "O"},
+            {Col.NAME: "E", Col.YEAR: 2026, Col.MONTH: 7, Col.STATUS: Status.EXCESS, Col.ERROR_TARGET: ""},
+        ])
+        original = errors.copy(deep=True)
+
+        summary = summarize_review_targets(errors, (2026, 11))
+
+        self.assertEqual(summary["target_count"], 5)
+        self.assertEqual(summary["person_count"], 4)
+        self.assertEqual(summary["aged_count"], 3)
+        self.assertEqual(summary["aged_person_count"], 2)
+        self.assertEqual(summary["aged_counts"], {
+            Status.UNPAID: 1, Status.INSUFFICIENT: 1, Status.EXCESS: 1,
+        })
+        self.assertEqual(sum(summary["aged_counts"].values()), summary["aged_count"])
+        pd.testing.assert_frame_equal(errors, original)
+
+    def test_aged_cutoff_crosses_year_and_ignores_invalid_dates(self):
+        errors = pd.DataFrame([
+            {Col.NAME: "A", Col.YEAR: 2025, Col.MONTH: 10, Col.STATUS: Status.EXCESS, Col.DIFF: 1000},
+            {Col.NAME: "B", Col.YEAR: 2025, Col.MONTH: 11, Col.STATUS: Status.INSUFFICIENT, Col.DIFF: -1000},
+            {Col.NAME: "C", Col.YEAR: 2025, Col.MONTH: 0, Col.STATUS: Status.UNPAID, Col.DIFF: None},
+            {Col.NAME: "D", Col.YEAR: None, Col.MONTH: 5, Col.STATUS: Status.UNPAID, Col.DIFF: None},
+        ])
+
+        summary = summarize_review_targets(errors, (2026, 1))
+
+        self.assertEqual(summary["aged_count"], 1)
+        self.assertEqual(summary["aged_person_count"], 1)
+        self.assertEqual(summary["aged_counts"][Status.EXCESS], 1)
+
     def test_counts_only_targets_and_deduplicates_people(self):
         errors = pd.DataFrame([
             {Col.NAME: "A", Col.STATUS: Status.INSUFFICIENT, Col.ERROR_TARGET: "O", Col.UNPAID_3_MONTHS: ""},
@@ -45,6 +82,9 @@ class TestReviewSummary(unittest.TestCase):
         self.assertEqual(summary["person_count"], 0)
         self.assertEqual(summary["long_unpaid_count"], 0)
         self.assertTrue(all(value == 0 for value in summary["counts"].values()))
+        self.assertEqual(summary["aged_count"], 0)
+        self.assertEqual(summary["aged_person_count"], 0)
+        self.assertTrue(all(value == 0 for value in summary["aged_counts"].values()))
 
     def test_only_excluded_results_have_zero_metrics(self):
         errors = pd.DataFrame([

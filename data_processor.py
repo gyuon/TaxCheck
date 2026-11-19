@@ -47,12 +47,17 @@ def _set_error_target(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def summarize_review_targets(df_errors: pd.DataFrame) -> dict:
+def summarize_review_targets(
+    df_errors: pd.DataFrame, reference_date: tuple[int, int] | None = None
+) -> dict:
     summary = {
         "target_count": 0,
         "person_count": 0,
         "long_unpaid_count": 0,
         "counts": {status: 0 for status in [Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]},
+        "aged_count": 0,
+        "aged_person_count": 0,
+        "aged_counts": {status: 0 for status in [Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]},
     }
     if df_errors.empty:
         return summary
@@ -76,6 +81,17 @@ def summarize_review_targets(df_errors: pd.DataFrame) -> dict:
     summary["long_unpaid_count"] = int(
         (targets[Col.STATUS].eq(Status.UNPAID) & long_unpaid.fillna(False)).sum()
     )
+    if reference_date is not None:
+        aged = filter_comparison_period(targets, reference_date)
+    else:
+        # 기준월이 없는 이전 호출에서는 확인 가능한 미납 표시만 사용한다.
+        aged = targets.loc[targets[Col.STATUS].eq(Status.UNPAID) & long_unpaid.fillna(False)]
+    summary["aged_count"] = len(aged)
+    summary["aged_person_count"] = int(aged[Col.NAME].nunique())
+    summary["aged_counts"] = {
+        status: int(aged[Col.STATUS].eq(status).sum())
+        for status in [Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]
+    }
     return summary
 
 

@@ -718,7 +718,9 @@ def build_result_view_from_storage():
 
 
 def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view=None):
-    review = summarize_review_targets(df_errors)
+    source_filename = summary.get("source_filename") or dl_name.replace("_오류검출.xlsx", ".xlsx")
+    reference_date = extract_date_from_filename(source_filename)
+    review = summarize_review_targets(df_errors, reference_date)
     duration = summary["duration"]
     period_count = summary["period_count"]
     c_filt = summary["filtered_count"]
@@ -726,34 +728,19 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
     ui.label("분석 결과").classes("text-2xl font-bold text-slate-800 text-center w-full")
 
     with ui.element("div").classes("result-summary w-full border border-slate-200"):
-        with ui.element("dl").classes("grid grid-cols-2 divide-x divide-slate-200 m-0"):
-            for label, value, unit in [
-                ("오류 대상", review["target_count"], "건"),
-                ("대상자", review["person_count"], "명"),
-            ]:
-                with ui.element("div").classes("min-w-0 text-center"):
-                    with ui.element("dt").classes(
-                        "bg-slate-100 border-b border-slate-200 px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-600"
-                    ):
-                        ui.label(label)
-                    with ui.element("dd").classes(
-                        "m-0 px-3 py-2.5 text-2xl sm:text-3xl font-semibold text-slate-900 tabular-nums"
-                    ):
-                        ui.label(f"{value:,}{unit}")
-
         with ui.element("table").classes(
-            "w-full table-fixed border-collapse border-t border-slate-200 text-slate-800"
-        ).props('aria-label="오류 대상 상태별 집계"'):
+            "w-full table-fixed border-collapse text-slate-800"
+        ).props('aria-label="납부 오류 상태별 집계"'):
             with ui.element("thead").classes("bg-slate-100 text-slate-600"):
                 with ui.element("tr"):
-                    for heading in ["구분", "오류 대상", "3개월 이상 미납"]:
+                    for heading in ["구분", "납부 오류", "3개월 경과 오류"]:
                         alignment = "text-left" if heading == "구분" else "text-center"
                         with ui.element("th").props('scope="col"').classes(
                             f"{alignment} border-b border-slate-200 px-3 py-2 text-xs sm:text-sm font-medium leading-snug"
                         ):
                             label = ui.label(heading)
-                            if heading == "3개월 이상 미납":
-                                label.tooltip("기준월보다 3개월 이상 이전의 미납 건수")
+                            if heading == "3개월 경과 오류":
+                                label.tooltip("원본 파일명의 기준월보다 3개월 이상 이전의 납부 오류 건수")
             with ui.element("tbody"):
                 for status in [Status.UNPAID, Status.INSUFFICIENT, Status.EXCESS]:
                     border = "border-b border-slate-200" if status != Status.EXCESS else ""
@@ -766,12 +753,27 @@ def build_result_view(df_errors, df_first, df_summary, dl_name, summary, df_view
                             "px-3 py-1.5 text-center text-base font-semibold tabular-nums"
                         ):
                             ui.label(f"{review['counts'][status]:,}건")
-                        overdue = f"{review['long_unpaid_count']:,}건" if status == Status.UNPAID else "-"
-                        foreground = "text-orange-600" if status == Status.UNPAID else "text-slate-400"
                         with ui.element("td").classes(
-                            f"{foreground} px-3 py-1.5 text-center text-base font-semibold tabular-nums"
+                            "text-orange-600 px-3 py-1.5 text-center text-base font-semibold tabular-nums"
                         ):
-                            ui.label(overdue)
+                            ui.label(f"{review['aged_counts'][status]:,}건")
+            with ui.element("tfoot").classes("border-t border-slate-300 bg-slate-50"):
+                for label, total, aged, unit in [
+                    ("합계", review["target_count"], review["aged_count"], "건"),
+                    ("대상자", review["person_count"], review["aged_person_count"], "명"),
+                ]:
+                    with ui.element("tr").classes("border-b border-slate-200 last:border-b-0"):
+                        with ui.element("th").props('scope="row"').classes(
+                            "px-3 py-2 text-left text-sm font-medium"
+                        ):
+                            ui.label(label)
+                        for value, foreground in [(total, "text-slate-900"), (aged, "text-orange-600")]:
+                            with ui.element("td").classes(
+                                f"{foreground} px-3 py-2 text-center text-lg font-semibold tabular-nums"
+                            ):
+                                ui.label(f"{value:,}{unit}")
+                                if unit == "명":
+                                    ui.tooltip("여러 오류가 있는 사람도 한 명으로 집계합니다")
 
     with ui.element("dl").classes("result-metadata self-stretch mx-px my-0 border-t border-slate-200"):
         for label, value in [
